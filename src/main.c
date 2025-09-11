@@ -6,14 +6,13 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
+#include "config.h"
+#include "logger.h"
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
-#include "config.h"
 
 int main() {
     printf("=== ImageServer v1.0 - Iniciando ===\n");
-    printf("PID: %d\n", getpid());
-    printf("STB Image Library cargada correctamente\n");
     
     // Cargar configuración
     printf("\n--- Cargando Configuración ---\n");
@@ -27,15 +26,40 @@ int main() {
         return 1;
     }
     
-    // Mostrar configuración cargada
-    print_config();
+    // Inicializar logger
+    printf("\n--- Inicializando Logger ---\n");
+    if (!init_logger(LOG_FILE_PATH, server_config.log_level)) {
+        printf("Error: No se pudo inicializar el logger\n");
+        return 1;
+    }
     
-    // Información del sistema
-    printf("--- Estado del Sistema ---\n");
-    printf("Formatos soportados por STB: JPG, PNG, GIF, BMP\n");
-    printf("Puerto configurado: %d\n", server_config.port);
-    printf("Servidor listo para iniciar\n");
+    // Usar el logger para mostrar información
+    LOG_INFO("STB Image Library cargada correctamente");
+    LOG_INFO("Puerto configurado: %d", server_config.port);
     
-    printf("\n=== Prueba de configuración completada ===\n");
+    // Mostrar configuración usando el logger
+    LOG_INFO("=== Configuración Cargada ===");
+    LOG_INFO("Puerto: %d", server_config.port);
+    LOG_INFO("Max Conexiones: %d", server_config.max_connections);
+    LOG_INFO("Thread Pool: %d", server_config.thread_pool_size);
+    LOG_INFO("Rutas configuradas correctamente");
+    
+    // Simular algunas actividades de clientes para probar el log
+    LOG_INFO("--- Simulando actividad ---");
+    log_client_activity("192.168.1.100", "test_image.jpg", "upload", "success");
+    log_client_activity("192.168.1.101", "photo.png", "process", "success");
+    log_client_activity("192.168.1.102", "invalid.gif", "upload", "error");
+    
+    LOG_WARNING("Ejemplo de mensaje de warning");
+    LOG_ERROR("Ejemplo de mensaje de error (no crítico, solo prueba)");
+    
+    LOG_INFO("Formatos soportados por STB: JPG, PNG, GIF, BMP");
+    LOG_INFO("Servidor listo para iniciar");
+    
+    LOG_INFO("=== Prueba de configuración y logging completada ===");
+    
+    // Cerrar logger
+    close_logger();
+    
     return 0;
 }
