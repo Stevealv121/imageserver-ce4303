@@ -1,0 +1,32 @@
+# Archivos compilados
+bin/
+obj/
+*.o
+*.exe
+*.out
+
+# Archivos temporales
+*.tmp
+*.temp
+*~
+
+# Logs locales de desarrollo
+logs/
+*.log
+
+# Archivos de configuración local (mantener el template)
+config_local.conf
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Imágenes de prueba (opcional)
+test_images/
+temp_images/
