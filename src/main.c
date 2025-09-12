@@ -1,28 +1,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 
-// Definir implementaciones de STB (solo en un archivo .c)
+// Definir implementaciones de STB (solo una vez)
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
-#include "config.h"
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include "config.h"
 #include "logger.h"
 #include "daemon.h"
-
-// Definir implementaciones de STB (solo en un archivo .c)
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-
-#include "stb/stb_image.h"
-#include "stb/stb_image_write.h"
 
 // Función para ejecutar el bucle principal del daemon
 void daemon_main_loop(void) {
