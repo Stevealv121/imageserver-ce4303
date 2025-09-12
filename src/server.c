@@ -5,400 +5,483 @@
 
 // Variable global del servidor
 tcp_server_t main_server;
-
+// Estadísticas globales de archivos
+static file_stats_t global_stats = {0};
 // Buffer para recibir datos grandes (para archivos)
 static char large_buffer[MAX_UPLOAD_SIZE];
 
+// Inicializar estadísticas de archivos
+void init_file_stats(void)
+{
+    memset(&global_stats, 0, sizeof(global_stats));
+}
+
+// Obtener puntero a las estadísticas
+file_stats_t *get_file_stats(void)
+{
+    return &global_stats;
+}
+
+// Loggear estadísticas
+void log_file_stats(void)
+{
+    LOG_INFO("Estadísticas - Uploads: %d (éxitos: %d, fallos: %d), Bytes: %zu",
+             global_stats.total_uploads, global_stats.successful_uploads,
+             global_stats.failed_uploads, global_stats.total_bytes_processed);
+}
+
 // Inicializar el servidor
-int init_server(void) {
+int init_server(void)
+{
     LOG_INFO("Inicializando servidor TCP...");
-    
+
     // Inicializar estructura del servidor
     memset(&main_server, 0, sizeof(tcp_server_t));
     main_server.status = SERVER_STOPPED;
     main_server.server_socket = -1;
     main_server.client_count = 0;
-    
+
     // Inicializar mutex para clientes
-    if (pthread_mutex_init(&main_server.clients_mutex, NULL) != 0) {
+    if (pthread_mutex_init(&main_server.clients_mutex, NULL) != 0)
+    {
         LOG_ERROR("Error inicializando mutex de clientes: %s", strerror(errno));
         return 0;
     }
-    
+
     // Inicializar estadísticas de archivos
     init_file_stats();
-    
+
     // Crear socket del servidor
     main_server.server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (main_server.server_socket == -1) {
+    if (main_server.server_socket == -1)
+    {
         LOG_ERROR("Error creando socket: %s", strerror(errno));
         return 0;
     }
-    
+
     // Configurar opción SO_REUSEADDR
     int opt = 1;
-    if (setsockopt(main_server.server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+    if (setsockopt(main_server.server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    {
         LOG_WARNING("Error configurando SO_REUSEADDR: %s", strerror(errno));
     }
-    
+
     // Configurar timeout para recv (30 segundos)
     struct timeval timeout;
     timeout.tv_sec = 30;
     timeout.tv_usec = 0;
-    if (setsockopt(main_server.server_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+    if (setsockopt(main_server.server_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+    {
         LOG_WARNING("Error configurando timeout de recepción: %s", strerror(errno));
     }
-    
+
     // Configurar direccion del servidor
     memset(&main_server.server_addr, 0, sizeof(main_server.server_addr));
     main_server.server_addr.sin_family = AF_INET;
     main_server.server_addr.sin_addr.s_addr = INADDR_ANY;
     main_server.server_addr.sin_port = htons(server_config.port);
-    
+
     // Bind del socket
-    if (bind(main_server.server_socket, (struct sockaddr*)&main_server.server_addr, 
-             sizeof(main_server.server_addr)) < 0) {
+    if (bind(main_server.server_socket, (struct sockaddr *)&main_server.server_addr,
+             sizeof(main_server.server_addr)) < 0)
+    {
         LOG_ERROR("Error en bind puerto %d: %s", server_config.port, strerror(errno));
         close(main_server.server_socket);
         return 0;
     }
-    
+
     LOG_INFO("Servidor inicializado correctamente en puerto %d", server_config.port);
     return 1;
 }
 
 // Iniciar el servidor
-int start_server(void) {
-    if (main_server.status == SERVER_RUNNING) {
+int start_server(void)
+{
+    if (main_server.status == SERVER_RUNNING)
+    {
         LOG_WARNING("El servidor ya está ejecutándose");
         return 1;
     }
-    
+
     main_server.status = SERVER_STARTING;
     LOG_INFO("Iniciando servidor TCP...");
-    
+
     // Poner socket en modo escucha
-    if (listen(main_server.server_socket, server_config.max_connections) < 0) {
+    if (listen(main_server.server_socket, server_config.max_connections) < 0)
+    {
         LOG_ERROR("Error en listen: %s", strerror(errno));
         main_server.status = SERVER_STOPPED;
         return 0;
     }
-    
+
     // Crear hilo del servidor
-    if (pthread_create(&main_server.server_thread, NULL, server_thread_func, NULL) != 0) {
+    if (pthread_create(&main_server.server_thread, NULL, server_thread_func, NULL) != 0)
+    {
         LOG_ERROR("Error creando hilo del servidor: %s", strerror(errno));
         main_server.status = SERVER_STOPPED;
         return 0;
     }
-    
+
     main_server.status = SERVER_RUNNING;
     LOG_INFO("Servidor TCP iniciado - Escuchando en puerto %d", server_config.port);
     LOG_INFO("Máximo de conexiones: %d", server_config.max_connections);
-    
+
     return 1;
 }
 
 // Hilo principal del servidor
-void* server_thread_func(void* arg) {
+void *server_thread_func(void *arg)
+{
     (void)arg; // Evitar warning de parámetro no usado
-    
+
     LOG_INFO("Hilo del servidor iniciado");
-    
-    while (main_server.status == SERVER_RUNNING) {
+
+    while (main_server.status == SERVER_RUNNING)
+    {
         // Aceptar nueva conexión
-        if (accept_client_connection() < 0) {
-            if (main_server.status == SERVER_RUNNING) {
+        if (accept_client_connection() < 0)
+        {
+            if (main_server.status == SERVER_RUNNING)
+            {
                 LOG_ERROR("Error aceptando conexión");
                 usleep(100000); // Esperar 100ms antes de intentar de nuevo
             }
         }
-        
+
         // Limpiar clientes inactivos periódicamente
         cleanup_inactive_clients();
-        
+
         // Limpiar archivos temporales antiguos cada cierto tiempo
         static time_t last_cleanup = 0;
         time_t now = time(NULL);
-        if (now - last_cleanup > 3600) { // Cada hora
+        if (now - last_cleanup > 3600)
+        {                                             // Cada hora
             int cleaned = cleanup_old_temp_files(24); // Limpiar archivos > 24h
-            if (cleaned > 0) {
+            if (cleaned > 0)
+            {
                 LOG_INFO("Limpiados %d archivos temporales antiguos", cleaned);
             }
             last_cleanup = now;
         }
     }
-    
+
     LOG_INFO("Hilo del servidor terminando...");
     return NULL;
 }
 
 // Aceptar conexión de cliente
-int accept_client_connection(void) {
+int accept_client_connection(void)
+{
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
     int client_socket;
-    
+
     // Aceptar conexión
-    client_socket = accept(main_server.server_socket, (struct sockaddr*)&client_addr, &client_len);
-    if (client_socket < 0) {
-        if (errno != EINTR && main_server.status == SERVER_RUNNING) {
+    client_socket = accept(main_server.server_socket, (struct sockaddr *)&client_addr, &client_len);
+    if (client_socket < 0)
+    {
+        if (errno != EINTR && main_server.status == SERVER_RUNNING)
+        {
             LOG_ERROR("Error en accept: %s", strerror(errno));
         }
         return -1;
     }
-    
+
     // Verificar límite de conexiones
     pthread_mutex_lock(&main_server.clients_mutex);
-    if (main_server.client_count >= server_config.max_connections) {
+    if (main_server.client_count >= server_config.max_connections)
+    {
         pthread_mutex_unlock(&main_server.clients_mutex);
         LOG_WARNING("Máximo de conexiones alcanzado, rechazando cliente");
-        
+
         // Enviar respuesta de servidor ocupado
-        send_http_response(client_socket, 503, "application/json", 
-                          "{\"error\":\"Server busy\",\"code\":503}", 31);
+        send_http_response(client_socket, 503, "application/json",
+                           "{\"error\":\"Server busy\",\"code\":503}", 31);
         close(client_socket);
         return -1;
     }
     pthread_mutex_unlock(&main_server.clients_mutex);
-    
+
     // Agregar cliente y crear hilo
     int client_index = add_client(client_socket, &client_addr);
-    if (client_index < 0) {
+    if (client_index < 0)
+    {
         LOG_ERROR("Error agregando cliente");
         close(client_socket);
         return -1;
     }
-    
+
     return 0;
 }
 
 // Agregar cliente a la lista
-int add_client(int socket_fd, struct sockaddr_in* client_addr) {
+int add_client(int socket_fd, struct sockaddr_in *client_addr)
+{
     pthread_mutex_lock(&main_server.clients_mutex);
-    
+
     // Buscar slot libre
     int client_index = -1;
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (!main_server.clients[i].active) {
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (!main_server.clients[i].active)
+        {
             client_index = i;
             break;
         }
     }
-    
-    if (client_index == -1) {
+
+    if (client_index == -1)
+    {
         pthread_mutex_unlock(&main_server.clients_mutex);
         return -1;
     }
-    
+
     // Configurar información del cliente
     main_server.clients[client_index].socket_fd = socket_fd;
     main_server.clients[client_index].address = *client_addr;
     main_server.clients[client_index].active = 1;
     main_server.clients[client_index].connection_time = time(NULL);
-    
+
     // Convertir IP a string
-    inet_ntop(AF_INET, &client_addr->sin_addr, 
+    inet_ntop(AF_INET, &client_addr->sin_addr,
               main_server.clients[client_index].ip_str, INET_ADDRSTRLEN);
-    
+
     main_server.client_count++;
-    
-    LOG_INFO("Cliente conectado: %s (Total: %d)", 
+
+    LOG_INFO("Cliente conectado: %s (Total: %d)",
              main_server.clients[client_index].ip_str, main_server.client_count);
-    
+
     // Crear hilo para el cliente
-    if (pthread_create(&main_server.clients[client_index].thread_id, NULL, 
-                       client_handler_thread, &main_server.clients[client_index]) != 0) {
+    if (pthread_create(&main_server.clients[client_index].thread_id, NULL,
+                       client_handler_thread, &main_server.clients[client_index]) != 0)
+    {
         LOG_ERROR("Error creando hilo para cliente: %s", strerror(errno));
         main_server.clients[client_index].active = 0;
         main_server.client_count--;
         pthread_mutex_unlock(&main_server.clients_mutex);
         return -1;
     }
-    
+
     pthread_mutex_unlock(&main_server.clients_mutex);
     return client_index;
 }
 
 // Recibir petición HTTP completa con soporte para archivos grandes
-int receive_complete_request(int client_socket, char* buffer, size_t buffer_size, size_t* total_received) {
+int receive_complete_request(int client_socket, char *buffer, size_t buffer_size, size_t *total_received)
+{
     *total_received = 0;
     int content_length = -1;
     int headers_complete = 0;
     size_t headers_end_pos = 0;
-    
+
     // Recibir datos en chunks
-    while (*total_received < buffer_size - 1) {
-        int bytes_received = recv(client_socket, buffer + *total_received, 
-                                buffer_size - *total_received - 1, 0);
-        
-        if (bytes_received <= 0) {
-            if (bytes_received == 0) {
+    while (*total_received < buffer_size - 1)
+    {
+        int bytes_received = recv(client_socket, buffer + *total_received,
+                                  buffer_size - *total_received - 1, 0);
+
+        if (bytes_received <= 0)
+        {
+            if (bytes_received == 0)
+            {
                 LOG_DEBUG("Cliente desconectado durante recepción");
-            } else {
+            }
+            else
+            {
                 LOG_ERROR("Error recibiendo datos: %s", strerror(errno));
             }
             return -1;
         }
-        
+
         *total_received += bytes_received;
         buffer[*total_received] = '\0';
-        
+
         // Si no hemos completado los headers, buscar el final
-        if (!headers_complete) {
-            char* headers_end = strstr(buffer, "\r\n\r\n");
-            if (!headers_end) {
+        if (!headers_complete)
+        {
+            char *headers_end = strstr(buffer, "\r\n\r\n");
+            if (!headers_end)
+            {
                 headers_end = strstr(buffer, "\n\n");
-                if (headers_end) {
+                if (headers_end)
+                {
                     headers_end_pos = (headers_end - buffer) + 2;
                     headers_complete = 1;
                 }
-            } else {
+            }
+            else
+            {
                 headers_end_pos = (headers_end - buffer) + 4;
                 headers_complete = 1;
             }
-            
+
             // Extraer Content-Length si encontramos los headers
-            if (headers_complete && content_length == -1) {
-                char* cl_header = strstr(buffer, "Content-Length:");
-                if (cl_header) {
+            if (headers_complete && content_length == -1)
+            {
+                char *cl_header = strstr(buffer, "Content-Length:");
+                if (cl_header)
+                {
                     cl_header += strlen("Content-Length:");
-                    while (*cl_header == ' ' || *cl_header == '\t') cl_header++;
+                    while (*cl_header == ' ' || *cl_header == '\t')
+                        cl_header++;
                     content_length = atoi(cl_header);
                     LOG_DEBUG("Content-Length detectado: %d", content_length);
                 }
             }
         }
-        
+
         // Si tenemos Content-Length, verificar si hemos recibido todo
-        if (headers_complete && content_length > 0) {
+        if (headers_complete && content_length > 0)
+        {
             size_t body_received = *total_received - headers_end_pos;
-            if (body_received >= (size_t)content_length) {
-                LOG_DEBUG("Petición completa recibida: %zu bytes (headers: %zu, body: %zu)", 
-                         *total_received, headers_end_pos, body_received);
+            if (body_received >= (size_t)content_length)
+            {
+                LOG_DEBUG("Petición completa recibida: %zu bytes (headers: %zu, body: %zu)",
+                          *total_received, headers_end_pos, body_received);
                 return 0;
             }
         }
-        
+
         // Para peticiones GET simples sin Content-Length
-        if (headers_complete && content_length == -1) {
+        if (headers_complete && content_length == -1)
+        {
             // Asumir que es una petición GET simple
             return 0;
         }
-        
+
         // Timeout simple - si no recibimos datos en un tiempo, continuar
         usleep(10000); // 10ms
     }
-    
+
     LOG_WARNING("Buffer lleno, truncando petición");
     return 0;
 }
 
 // Hilo manejador de cliente mejorado
-void* client_handler_thread(void* arg) {
-    client_info_t* client = (client_info_t*)arg;
+void *client_handler_thread(void *arg)
+{
+    client_info_t *client = (client_info_t *)arg;
     size_t total_received;
-    
+
     LOG_INFO("Iniciando manejo de cliente: %s", client->ip_str);
-    
+
     // Recibir petición HTTP completa
-    int recv_result = receive_complete_request(client->socket_fd, large_buffer, 
-                                             sizeof(large_buffer), &total_received);
-    
-    if (recv_result == 0 && total_received > 0) {
+    int recv_result = receive_complete_request(client->socket_fd, large_buffer,
+                                               sizeof(large_buffer), &total_received);
+
+    if (recv_result == 0 && total_received > 0)
+    {
         LOG_DEBUG("Petición recibida de %s: %zu bytes", client->ip_str, total_received);
-        
+
         // Parsear petición HTTP
         char method[16], path[256];
-        if (parse_http_request(large_buffer, method, path) == 0) {
+        if (parse_http_request(large_buffer, method, path) == 0)
+        {
             LOG_INFO("Petición: %s %s desde %s (%zu bytes)", method, path, client->ip_str, total_received);
-            
-            if (strcmp(method, "POST") == 0) {
+
+            if (strcmp(method, "POST") == 0)
+            {
                 // Verificar si es upload de archivo
-                if (strstr(large_buffer, "multipart/form-data")) {
+                if (strstr(large_buffer, "multipart/form-data"))
+                {
                     LOG_INFO("Detectado upload de archivo desde %s", client->ip_str);
-                    handle_file_upload_request(client->socket_fd, large_buffer, 
-                                             total_received, client->ip_str);
-                } else {
+                    handle_file_upload_request(client->socket_fd, large_buffer,
+                                               total_received, client->ip_str);
+                }
+                else
+                {
                     // POST sin archivo
                     handle_post_request(client->socket_fd, large_buffer, total_received, client->ip_str);
                 }
-            } else if (strcmp(method, "GET") == 0) {
+            }
+            else if (strcmp(method, "GET") == 0)
+            {
                 handle_get_request(client->socket_fd, path, client->ip_str);
-            } else {
+            }
+            else
+            {
                 // Método no soportado
                 send_error_response(client->socket_fd, 405, "Method not allowed");
                 log_client_activity(client->ip_str, path, method, "method_not_allowed");
             }
-        } else {
+        }
+        else
+        {
             LOG_WARNING("Petición HTTP inválida desde %s", client->ip_str);
             send_error_response(client->socket_fd, 400, "Bad Request");
             log_client_activity(client->ip_str, "unknown", "invalid", "bad_request");
         }
-    } else {
+    }
+    else
+    {
         LOG_ERROR("Error recibiendo datos completos de %s", client->ip_str);
         send_error_response(client->socket_fd, 500, "Internal Server Error");
     }
-    
+
     // Cerrar conexión y marcar como inactivo
     close(client->socket_fd);
     client->active = 0;
-    
+
     pthread_mutex_lock(&main_server.clients_mutex);
     main_server.client_count--;
     LOG_INFO("Cliente desconectado: %s (Total: %d)", client->ip_str, main_server.client_count);
     pthread_mutex_unlock(&main_server.clients_mutex);
-    
+
     return NULL;
 }
 
 // Manejar petición GET
-int handle_get_request(int client_socket, const char* path, const char* client_ip) {
-    if (strcmp(path, "/") == 0 || strcmp(path, "/status") == 0) {
+int handle_get_request(int client_socket, const char *path, const char *client_ip)
+{
+    if (strcmp(path, "/") == 0 || strcmp(path, "/status") == 0)
+    {
         // Página de status del servidor
         char response_body[1024];
-        const file_stats_t* stats = get_file_stats();
-        
+        const file_stats_t *stats = get_file_stats();
+
         snprintf(response_body, sizeof(response_body),
-            "{\n"
-            "  \"service\": \"ImageServer\",\n"
-            "  \"version\": \"1.0\",\n"
-            "  \"status\": \"running\",\n"
-            "  \"port\": %d,\n"
-            "  \"active_connections\": %d,\n"
-            "  \"max_connections\": %d,\n"
-            "  \"stats\": {\n"
-            "    \"total_uploads\": %d,\n"
-            "    \"successful_uploads\": %d,\n"
-            "    \"failed_uploads\": %d,\n"
-            "    \"total_bytes_processed\": %zu\n"
-            "  },\n"
-            "  \"supported_formats\": \"%s\",\n"
-            "  \"max_file_size_mb\": %d\n"
-            "}",
-            server_config.port, main_server.client_count, server_config.max_connections,
-            stats->total_uploads, stats->successful_uploads, stats->failed_uploads, 
-            stats->total_bytes_processed, server_config.supported_formats, 
-            server_config.max_image_size_mb);
-        
+                 "{\n"
+                 "  \"service\": \"ImageServer\",\n"
+                 "  \"version\": \"1.0\",\n"
+                 "  \"status\": \"running\",\n"
+                 "  \"port\": %d,\n"
+                 "  \"active_connections\": %d,\n"
+                 "  \"max_connections\": %d,\n"
+                 "  \"stats\": {\n"
+                 "    \"total_uploads\": %d,\n"
+                 "    \"successful_uploads\": %d,\n"
+                 "    \"failed_uploads\": %d,\n"
+                 "    \"total_bytes_processed\": %zu\n"
+                 "  },\n"
+                 "  \"supported_formats\": \"%s\",\n"
+                 "  \"max_file_size_mb\": %d\n"
+                 "}",
+                 server_config.port, main_server.client_count, server_config.max_connections,
+                 stats->total_uploads, stats->successful_uploads, stats->failed_uploads,
+                 stats->total_bytes_processed, server_config.supported_formats,
+                 server_config.max_image_size_mb);
+
         send_success_response(client_socket, "application/json", response_body);
         log_client_activity(client_ip, path, "GET", "success");
         return 0;
-        
-    } else if (strcmp(path, "/upload") == 0) {
+    }
+    else if (strcmp(path, "/upload") == 0)
+    {
         // Página de información de upload
-        const char* upload_info = 
+        const char *upload_info =
             "{\n"
             "  \"message\": \"POST multipart/form-data to this endpoint\",\n"
             "  \"supported_formats\": [\"jpg\", \"jpeg\", \"png\", \"gif\"],\n"
             "  \"max_size_mb\": " STR(MAX_IMAGE_SIZE_MB) ",\n"
-            "  \"field_name\": \"image\"\n"
-            "}";
-        
+                                                         "  \"field_name\": \"image\"\n"
+                                                         "}";
+
         send_success_response(client_socket, "application/json", upload_info);
         log_client_activity(client_ip, path, "GET", "success");
         return 0;
-        
-    } else {
+    }
+    else
+    {
         // Recurso no encontrado
         send_error_response(client_socket, 404, "Not Found");
         log_client_activity(client_ip, path, "GET", "not_found");
@@ -407,85 +490,113 @@ int handle_get_request(int client_socket, const char* path, const char* client_i
 }
 
 // Manejar petición POST no-multipart
-int handle_post_request(int client_socket, const char* request_data, size_t request_len, const char* client_ip) {
-    (void)request_data; (void)request_len; // Evitar warnings
-    
-    const char* response = 
+int handle_post_request(int client_socket, const char *request_data, size_t request_len, const char *client_ip)
+{
+    (void)request_data;
+    (void)request_len; // Evitar warnings
+
+    const char *response =
         "{\n"
         "  \"error\": \"POST request must be multipart/form-data for file uploads\",\n"
         "  \"usage\": \"Send files using multipart/form-data with field name 'image'\"\n"
         "}";
-    
+
     send_http_response(client_socket, 400, "application/json", response, strlen(response));
     log_client_activity(client_ip, "POST", "non-multipart", "bad_request");
-    
+
     return -1;
 }
 
 // Enviar respuesta HTTP (función original mantenida para compatibilidad)
-int send_http_response(int client_socket, int status_code, const char* content_type, 
-                       const char* content, size_t content_length) {
+int send_http_response(int client_socket, int status_code, const char *content_type,
+                       const char *content, size_t content_length)
+{
     char response[MAX_BUFFER_SIZE];
-    char* status_text;
-    
-    switch(status_code) {
-        case 200: status_text = "OK"; break;
-        case 400: status_text = "Bad Request"; break;
-        case 404: status_text = "Not Found"; break;
-        case 405: status_text = "Method Not Allowed"; break;
-        case 500: status_text = "Internal Server Error"; break;
-        case 503: status_text = "Service Unavailable"; break;
-        default: status_text = "Unknown"; break;
+    char *status_text;
+
+    switch (status_code)
+    {
+    case 200:
+        status_text = "OK";
+        break;
+    case 400:
+        status_text = "Bad Request";
+        break;
+    case 404:
+        status_text = "Not Found";
+        break;
+    case 405:
+        status_text = "Method Not Allowed";
+        break;
+    case 500:
+        status_text = "Internal Server Error";
+        break;
+    case 503:
+        status_text = "Service Unavailable";
+        break;
+    default:
+        status_text = "Unknown";
+        break;
     }
-    
+
     int header_len = snprintf(response, sizeof(response),
-        "HTTP/1.1 %d %s\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Connection: close\r\n"
-        "Server: ImageServer/1.0\r\n"
-        "\r\n",
-        status_code, status_text, content_type, content_length);
-    
+                              "HTTP/1.1 %d %s\r\n"
+                              "Content-Type: %s\r\n"
+                              "Content-Length: %zu\r\n"
+                              "Connection: close\r\n"
+                              "Server: ImageServer/1.0\r\n"
+                              "\r\n",
+                              status_code, status_text, content_type, content_length);
+
     // Enviar header
-    if (send(client_socket, response, header_len, 0) < 0) {
+    if (send(client_socket, response, header_len, 0) < 0)
+    {
         return -1;
     }
-    
+
     // Enviar contenido si existe
-    if (content && content_length > 0) {
-        if (send(client_socket, content, content_length, 0) < 0) {
+    if (content && content_length > 0)
+    {
+        if (send(client_socket, content, content_length, 0) < 0)
+        {
             return -1;
         }
     }
-    
+
     return 0;
 }
 
 // Parsear petición HTTP básica (mejorada)
-int parse_http_request(const char* request, char* method, char* path) {
-    if (sscanf(request, "%15s %255s", method, path) != 2) {
+int parse_http_request(const char *request, char *method, char *path)
+{
+    if (sscanf(request, "%15s %255s", method, path) != 2)
+    {
         return -1;
     }
-    
+
     // Validar método HTTP
-    if (strcmp(method, "GET") != 0 && strcmp(method, "POST") != 0 && 
-        strcmp(method, "HEAD") != 0 && strcmp(method, "OPTIONS") != 0) {
+    if (strcmp(method, "GET") != 0 && strcmp(method, "POST") != 0 &&
+        strcmp(method, "HEAD") != 0 && strcmp(method, "OPTIONS") != 0)
+    {
         return -1;
     }
-    
+
     return 0;
 }
 
 // Limpiar clientes inactivos
-void cleanup_inactive_clients(void) {
+void cleanup_inactive_clients(void)
+{
     pthread_mutex_lock(&main_server.clients_mutex);
-    
+
     time_t now = time(NULL);
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (main_server.clients[i].active) {
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (main_server.clients[i].active)
+        {
             // Verificar timeout de conexión (5 minutos)
-            if (now - main_server.clients[i].connection_time > 300) {
+            if (now - main_server.clients[i].connection_time > 300)
+            {
                 LOG_WARNING("Cliente %s timeout, desconectando", main_server.clients[i].ip_str);
                 close(main_server.clients[i].socket_fd);
                 main_server.clients[i].active = 0;
@@ -493,53 +604,59 @@ void cleanup_inactive_clients(void) {
             }
         }
     }
-    
+
     pthread_mutex_unlock(&main_server.clients_mutex);
 }
 
 // Detener servidor
-int stop_server(void) {
-    if (main_server.status != SERVER_RUNNING) {
+int stop_server(void)
+{
+    if (main_server.status != SERVER_RUNNING)
+    {
         return 1;
     }
-    
+
     LOG_INFO("Deteniendo servidor TCP...");
     main_server.status = SERVER_STOPPING;
-    
+
     // Cerrar socket principal
-    if (main_server.server_socket != -1) {
+    if (main_server.server_socket != -1)
+    {
         close(main_server.server_socket);
     }
-    
+
     // Esperar a que termine el hilo del servidor
     pthread_join(main_server.server_thread, NULL);
-    
+
     // Mostrar estadísticas finales
     log_file_stats();
-    
+
     LOG_INFO("Servidor TCP detenido");
     return 1;
 }
 
 // Limpiar recursos del servidor
-void cleanup_server(void) {
+void cleanup_server(void)
+{
     LOG_INFO("Limpiando recursos del servidor...");
-    
+
     stop_server();
-    
+
     // Cerrar todas las conexiones de clientes
     pthread_mutex_lock(&main_server.clients_mutex);
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        if (main_server.clients[i].active) {
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (main_server.clients[i].active)
+        {
             close(main_server.clients[i].socket_fd);
             main_server.clients[i].active = 0;
         }
     }
     pthread_mutex_unlock(&main_server.clients_mutex);
-    
+
     // Destruir mutex
     pthread_mutex_destroy(&main_server.clients_mutex);
-    
+
     main_server.status = SERVER_STOPPED;
     LOG_INFO("Limpieza del servidor completada");
 }

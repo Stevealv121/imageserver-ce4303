@@ -62,6 +62,20 @@ typedef struct
 // Variable global del servidor
 extern tcp_server_t main_server;
 
+// Estructura para estadísticas de archivos
+typedef struct
+{
+    int total_uploads;
+    int successful_uploads;
+    int failed_uploads;
+    size_t total_bytes_processed;
+} file_stats_t;
+
+// Declaraciones de funciones
+file_stats_t *get_file_stats(void);
+void init_file_stats(void);
+void log_file_stats(void);
+
 // ================================
 // FUNCIONES PRINCIPALES DEL SERVIDOR
 // ================================
