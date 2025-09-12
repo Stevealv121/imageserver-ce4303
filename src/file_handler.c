@@ -1,3 +1,5 @@
+#include "config.h"
+#include "logger.h"
 #include "file_handler.h"
 
 // Función auxiliar para obtener el tamaño de archivo
@@ -40,10 +42,10 @@ void generate_temp_filename(char* temp_filename, size_t size, const char* origin
     char* ext = strrchr(original_filename, '.');
     if (ext) {
         snprintf(temp_filename, size, "%s/temp_%ld_%d%s", 
-                 server_config.temp_dir, now, pid, ext);
+                 server_config.temp_path, now, pid, ext);
     } else {
         snprintf(temp_filename, size, "%s/temp_%ld_%d.tmp", 
-                 server_config.temp_dir, now, pid);
+                 server_config.temp_path, now, pid);
     }
 }
 

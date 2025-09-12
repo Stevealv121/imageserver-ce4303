@@ -14,6 +14,7 @@
 #include "config.h"
 #include "logger.h"
 #include "daemon.h"
+#include "file_handler.h"
 #include "server.h"
 
 // Función para crear directorios necesarios (mejorada)
