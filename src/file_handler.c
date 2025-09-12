@@ -1,3 +1,5 @@
+#include <dirent.h>
+#include <sys/stat.h>
 #include "config.h"
 #include "logger.h"
 #include "file_handler.h"
@@ -364,4 +366,77 @@ int handle_file_upload_request(int client_socket, const char* request_data, size
              upload_info.original_filename, upload_info.file_size, saved_filepath);
     
     return 0;
+}
+
+// Limpiar archivos temporales antiguos
+int cleanup_old_temp_files(int max_age_hours) {
+    DIR *dir;
+    struct dirent *entry;
+    struct stat file_stat;
+    char filepath[512];
+    time_t current_time = time(NULL);
+    time_t max_age_seconds = max_age_hours * 3600;
+    int files_deleted = 0;
+    
+    LOG_DEBUG("Iniciando limpieza de archivos temporales (edad máxima: %d horas)", max_age_hours);
+    
+    // Abrir directorio temporal
+    dir = opendir(server_config.temp_path);
+    if (dir == NULL) {
+        LOG_ERROR("No se pudo abrir directorio temporal: %s (%s)", 
+                  server_config.temp_path, strerror(errno));
+        return -1;
+    }
+    
+    // Leer archivos del directorio
+    while ((entry = readdir(dir)) != NULL) {
+        // Saltar "." y ".."
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        
+        // Solo procesar archivos que empiecen con "temp_"
+        if (strncmp(entry->d_name, "temp_", 5) != 0) {
+            continue;
+        }
+        
+        // Construir path completo
+        snprintf(filepath, sizeof(filepath), "%s/%s", server_config.temp_path, entry->d_name);
+        
+        // Obtener información del archivo
+        if (stat(filepath, &file_stat) == -1) {
+            LOG_WARNING("No se pudo obtener información del archivo: %s (%s)", 
+                       filepath, strerror(errno));
+            continue;
+        }
+        
+        // Verificar si es un archivo regular
+        if (!S_ISREG(file_stat.st_mode)) {
+            continue;
+        }
+        
+        // Verificar edad del archivo
+        time_t file_age = current_time - file_stat.st_mtime;
+        if (file_age > max_age_seconds) {
+            // Eliminar archivo antiguo
+            if (unlink(filepath) == 0) {
+                files_deleted++;
+                LOG_INFO("Archivo temporal eliminado: %s (edad: %.1f horas)", 
+                        entry->d_name, (double)file_age / 3600.0);
+            } else {
+                LOG_ERROR("Error eliminando archivo temporal: %s (%s)", 
+                         filepath, strerror(errno));
+            }
+        }
+    }
+    
+    closedir(dir);
+    
+    if (files_deleted > 0) {
+        LOG_INFO("Limpieza completada: %d archivos temporales eliminados", files_deleted);
+    } else {
+        LOG_DEBUG("Limpieza completada: no se encontraron archivos antiguos para eliminar");
+    }
+    
+    return files_deleted;
 }

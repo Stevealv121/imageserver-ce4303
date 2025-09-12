@@ -11,7 +11,7 @@ OBJ_DIR = obj
 
 # Archivos fuente
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
-OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o) $(OBJ_DIR)/stb_impl.o
 TARGET = $(BIN_DIR)/imageserver
 
 # Directorio de instalación
@@ -51,7 +51,10 @@ $(TARGET): $(OBJECTS)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	@echo "Compilando $<..."
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
-
+# Compilar stb image
+$(OBJ_DIR)/stb_impl.o: lib/stb_impl.c
+	@echo "Compilando implementaciones STB..."
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 # Instalar el servicio
 install: all
 	@echo "Instalando ImageServer..."
