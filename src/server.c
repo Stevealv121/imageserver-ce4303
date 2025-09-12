@@ -1,9 +1,13 @@
 #include "server.h"
 #include "logger.h"
 #include "config.h"
+#include "file_handler.h"
 
 // Variable global del servidor
 tcp_server_t main_server;
+
+// Buffer para recibir datos grandes (para archivos)
+static char large_buffer[MAX_UPLOAD_SIZE];
 
 // Inicializar el servidor
 int init_server(void) {
@@ -21,6 +25,9 @@ int init_server(void) {
         return 0;
     }
     
+    // Inicializar estadísticas de archivos
+    init_file_stats();
+    
     // Crear socket del servidor
     main_server.server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (main_server.server_socket == -1) {
@@ -34,7 +41,15 @@ int init_server(void) {
         LOG_WARNING("Error configurando SO_REUSEADDR: %s", strerror(errno));
     }
     
-    // Configurar dirección del servidor
+    // Configurar timeout para recv (30 segundos)
+    struct timeval timeout;
+    timeout.tv_sec = 30;
+    timeout.tv_usec = 0;
+    if (setsockopt(main_server.server_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        LOG_WARNING("Error configurando timeout de recepción: %s", strerror(errno));
+    }
+    
+    // Configurar direccion del servidor
     memset(&main_server.server_addr, 0, sizeof(main_server.server_addr));
     main_server.server_addr.sin_family = AF_INET;
     main_server.server_addr.sin_addr.s_addr = INADDR_ANY;
@@ -100,6 +115,17 @@ void* server_thread_func(void* arg) {
         
         // Limpiar clientes inactivos periódicamente
         cleanup_inactive_clients();
+        
+        // Limpiar archivos temporales antiguos cada cierto tiempo
+        static time_t last_cleanup = 0;
+        time_t now = time(NULL);
+        if (now - last_cleanup > 3600) { // Cada hora
+            int cleaned = cleanup_old_temp_files(24); // Limpiar archivos > 24h
+            if (cleaned > 0) {
+                LOG_INFO("Limpiados %d archivos temporales antiguos", cleaned);
+            }
+            last_cleanup = now;
+        }
     }
     
     LOG_INFO("Hilo del servidor terminando...");
@@ -128,7 +154,8 @@ int accept_client_connection(void) {
         LOG_WARNING("Máximo de conexiones alcanzado, rechazando cliente");
         
         // Enviar respuesta de servidor ocupado
-        send_http_response(client_socket, 503, "text/plain", "Server busy", 11);
+        send_http_response(client_socket, 503, "application/json", 
+                          "{\"error\":\"Server busy\",\"code\":503}", 31);
         close(client_socket);
         return -1;
     }
@@ -167,6 +194,7 @@ int add_client(int socket_fd, struct sockaddr_in* client_addr) {
     main_server.clients[client_index].socket_fd = socket_fd;
     main_server.clients[client_index].address = *client_addr;
     main_server.clients[client_index].active = 1;
+    main_server.clients[client_index].connection_time = time(NULL);
     
     // Convertir IP a string
     inet_ntop(AF_INET, &client_addr->sin_addr, 
@@ -191,40 +219,124 @@ int add_client(int socket_fd, struct sockaddr_in* client_addr) {
     return client_index;
 }
 
-// Hilo manejador de cliente
+// Recibir petición HTTP completa con soporte para archivos grandes
+int receive_complete_request(int client_socket, char* buffer, size_t buffer_size, size_t* total_received) {
+    *total_received = 0;
+    int content_length = -1;
+    int headers_complete = 0;
+    size_t headers_end_pos = 0;
+    
+    // Recibir datos en chunks
+    while (*total_received < buffer_size - 1) {
+        int bytes_received = recv(client_socket, buffer + *total_received, 
+                                buffer_size - *total_received - 1, 0);
+        
+        if (bytes_received <= 0) {
+            if (bytes_received == 0) {
+                LOG_DEBUG("Cliente desconectado durante recepción");
+            } else {
+                LOG_ERROR("Error recibiendo datos: %s", strerror(errno));
+            }
+            return -1;
+        }
+        
+        *total_received += bytes_received;
+        buffer[*total_received] = '\0';
+        
+        // Si no hemos completado los headers, buscar el final
+        if (!headers_complete) {
+            char* headers_end = strstr(buffer, "\r\n\r\n");
+            if (!headers_end) {
+                headers_end = strstr(buffer, "\n\n");
+                if (headers_end) {
+                    headers_end_pos = (headers_end - buffer) + 2;
+                    headers_complete = 1;
+                }
+            } else {
+                headers_end_pos = (headers_end - buffer) + 4;
+                headers_complete = 1;
+            }
+            
+            // Extraer Content-Length si encontramos los headers
+            if (headers_complete && content_length == -1) {
+                char* cl_header = strstr(buffer, "Content-Length:");
+                if (cl_header) {
+                    cl_header += strlen("Content-Length:");
+                    while (*cl_header == ' ' || *cl_header == '\t') cl_header++;
+                    content_length = atoi(cl_header);
+                    LOG_DEBUG("Content-Length detectado: %d", content_length);
+                }
+            }
+        }
+        
+        // Si tenemos Content-Length, verificar si hemos recibido todo
+        if (headers_complete && content_length > 0) {
+            size_t body_received = *total_received - headers_end_pos;
+            if (body_received >= (size_t)content_length) {
+                LOG_DEBUG("Petición completa recibida: %zu bytes (headers: %zu, body: %zu)", 
+                         *total_received, headers_end_pos, body_received);
+                return 0;
+            }
+        }
+        
+        // Para peticiones GET simples sin Content-Length
+        if (headers_complete && content_length == -1) {
+            // Asumir que es una petición GET simple
+            return 0;
+        }
+        
+        // Timeout simple - si no recibimos datos en un tiempo, continuar
+        usleep(10000); // 10ms
+    }
+    
+    LOG_WARNING("Buffer lleno, truncando petición");
+    return 0;
+}
+
+// Hilo manejador de cliente mejorado
 void* client_handler_thread(void* arg) {
     client_info_t* client = (client_info_t*)arg;
-    char buffer[MAX_BUFFER_SIZE];
-    int bytes_received;
+    size_t total_received;
     
     LOG_INFO("Iniciando manejo de cliente: %s", client->ip_str);
     
-    // Recibir datos del cliente
-    bytes_received = recv(client->socket_fd, buffer, MAX_BUFFER_SIZE - 1, 0);
-    if (bytes_received > 0) {
-        buffer[bytes_received] = '\0';
+    // Recibir petición HTTP completa
+    int recv_result = receive_complete_request(client->socket_fd, large_buffer, 
+                                             sizeof(large_buffer), &total_received);
+    
+    if (recv_result == 0 && total_received > 0) {
+        LOG_DEBUG("Petición recibida de %s: %zu bytes", client->ip_str, total_received);
         
         // Parsear petición HTTP
-        char method[16], path[256], filename[MAX_FILENAME_SIZE];
-        if (parse_http_request(buffer, method, path, filename) == 0) {
-            LOG_INFO("Petición: %s %s desde %s", method, path, client->ip_str);
+        char method[16], path[256];
+        if (parse_http_request(large_buffer, method, path) == 0) {
+            LOG_INFO("Petición: %s %s desde %s (%zu bytes)", method, path, client->ip_str, total_received);
             
             if (strcmp(method, "POST") == 0) {
-                // Manejar subida de archivo
-                handle_file_upload(client->socket_fd, filename, buffer, bytes_received);
+                // Verificar si es upload de archivo
+                if (strstr(large_buffer, "multipart/form-data")) {
+                    LOG_INFO("Detectado upload de archivo desde %s", client->ip_str);
+                    handle_file_upload_request(client->socket_fd, large_buffer, 
+                                             total_received, client->ip_str);
+                } else {
+                    // POST sin archivo
+                    handle_post_request(client->socket_fd, large_buffer, total_received, client->ip_str);
+                }
+            } else if (strcmp(method, "GET") == 0) {
+                handle_get_request(client->socket_fd, path, client->ip_str);
             } else {
-                // Respuesta simple para otros métodos
-                const char* response = "ImageServer v1.0 - Listo para recibir imágenes";
-                send_http_response(client->socket_fd, 200, "text/plain", response, strlen(response));
+                // Método no soportado
+                send_error_response(client->socket_fd, 405, "Method not allowed");
+                log_client_activity(client->ip_str, path, method, "method_not_allowed");
             }
         } else {
             LOG_WARNING("Petición HTTP inválida desde %s", client->ip_str);
-            send_http_response(client->socket_fd, 400, "text/plain", "Bad Request", 11);
+            send_error_response(client->socket_fd, 400, "Bad Request");
+            log_client_activity(client->ip_str, "unknown", "invalid", "bad_request");
         }
-    } else if (bytes_received == 0) {
-        LOG_INFO("Cliente desconectado: %s", client->ip_str);
     } else {
-        LOG_ERROR("Error recibiendo datos de %s: %s", client->ip_str, strerror(errno));
+        LOG_ERROR("Error recibiendo datos completos de %s", client->ip_str);
+        send_error_response(client->socket_fd, 500, "Internal Server Error");
     }
     
     // Cerrar conexión y marcar como inactivo
@@ -239,7 +351,78 @@ void* client_handler_thread(void* arg) {
     return NULL;
 }
 
-// Enviar respuesta HTTP
+// Manejar petición GET
+int handle_get_request(int client_socket, const char* path, const char* client_ip) {
+    if (strcmp(path, "/") == 0 || strcmp(path, "/status") == 0) {
+        // Página de status del servidor
+        char response_body[1024];
+        const file_stats_t* stats = get_file_stats();
+        
+        snprintf(response_body, sizeof(response_body),
+            "{\n"
+            "  \"service\": \"ImageServer\",\n"
+            "  \"version\": \"1.0\",\n"
+            "  \"status\": \"running\",\n"
+            "  \"port\": %d,\n"
+            "  \"active_connections\": %d,\n"
+            "  \"max_connections\": %d,\n"
+            "  \"stats\": {\n"
+            "    \"total_uploads\": %d,\n"
+            "    \"successful_uploads\": %d,\n"
+            "    \"failed_uploads\": %d,\n"
+            "    \"total_bytes_processed\": %zu\n"
+            "  },\n"
+            "  \"supported_formats\": \"%s\",\n"
+            "  \"max_file_size_mb\": %d\n"
+            "}",
+            server_config.port, main_server.client_count, server_config.max_connections,
+            stats->total_uploads, stats->successful_uploads, stats->failed_uploads, 
+            stats->total_bytes_processed, server_config.supported_formats, 
+            server_config.max_image_size_mb);
+        
+        send_success_response(client_socket, "application/json", response_body);
+        log_client_activity(client_ip, path, "GET", "success");
+        return 0;
+        
+    } else if (strcmp(path, "/upload") == 0) {
+        // Página de información de upload
+        const char* upload_info = 
+            "{\n"
+            "  \"message\": \"POST multipart/form-data to this endpoint\",\n"
+            "  \"supported_formats\": [\"jpg\", \"jpeg\", \"png\", \"gif\"],\n"
+            "  \"max_size_mb\": " STR(MAX_IMAGE_SIZE_MB) ",\n"
+            "  \"field_name\": \"image\"\n"
+            "}";
+        
+        send_success_response(client_socket, "application/json", upload_info);
+        log_client_activity(client_ip, path, "GET", "success");
+        return 0;
+        
+    } else {
+        // Recurso no encontrado
+        send_error_response(client_socket, 404, "Not Found");
+        log_client_activity(client_ip, path, "GET", "not_found");
+        return -1;
+    }
+}
+
+// Manejar petición POST no-multipart
+int handle_post_request(int client_socket, const char* request_data, size_t request_len, const char* client_ip) {
+    (void)request_data; (void)request_len; // Evitar warnings
+    
+    const char* response = 
+        "{\n"
+        "  \"error\": \"POST request must be multipart/form-data for file uploads\",\n"
+        "  \"usage\": \"Send files using multipart/form-data with field name 'image'\"\n"
+        "}";
+    
+    send_http_response(client_socket, 400, "application/json", response, strlen(response));
+    log_client_activity(client_ip, "POST", "non-multipart", "bad_request");
+    
+    return -1;
+}
+
+// Enviar respuesta HTTP (función original mantenida para compatibilidad)
 int send_http_response(int client_socket, int status_code, const char* content_type, 
                        const char* content, size_t content_length) {
     char response[MAX_BUFFER_SIZE];
@@ -248,6 +431,8 @@ int send_http_response(int client_socket, int status_code, const char* content_t
     switch(status_code) {
         case 200: status_text = "OK"; break;
         case 400: status_text = "Bad Request"; break;
+        case 404: status_text = "Not Found"; break;
+        case 405: status_text = "Method Not Allowed"; break;
         case 500: status_text = "Internal Server Error"; break;
         case 503: status_text = "Service Unavailable"; break;
         default: status_text = "Unknown"; break;
@@ -258,6 +443,7 @@ int send_http_response(int client_socket, int status_code, const char* content_t
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: close\r\n"
+        "Server: ImageServer/1.0\r\n"
         "\r\n",
         status_code, status_text, content_type, content_length);
     
@@ -276,41 +462,39 @@ int send_http_response(int client_socket, int status_code, const char* content_t
     return 0;
 }
 
-// Parsear petición HTTP básica
-int parse_http_request(const char* request, char* method, char* path, char* filename) {
+// Parsear petición HTTP básica (mejorada)
+int parse_http_request(const char* request, char* method, char* path) {
     if (sscanf(request, "%15s %255s", method, path) != 2) {
         return -1;
     }
     
-    // Extraer nombre de archivo del path
-    char* file_part = strrchr(path, '/');
-    if (file_part) {
-        strncpy(filename, file_part + 1, MAX_FILENAME_SIZE - 1);
-        filename[MAX_FILENAME_SIZE - 1] = '\0';
-    } else {
-        strcpy(filename, "unknown");
+    // Validar método HTTP
+    if (strcmp(method, "GET") != 0 && strcmp(method, "POST") != 0 && 
+        strcmp(method, "HEAD") != 0 && strcmp(method, "OPTIONS") != 0) {
+        return -1;
     }
     
     return 0;
 }
 
-// Manejar subida de archivo (básico por ahora)
-int handle_file_upload(int client_socket, const char* filename, const char* request, size_t request_len) {
-    (void)request; (void)request_len; // Evitar warnings
-    
-    LOG_INFO("Procesando archivo: %s", filename);
-    
-    // Por ahora solo responder que se recibió
-    char response[256];
-    snprintf(response, sizeof(response), "Archivo recibido: %s", filename);
-    
-    return send_http_response(client_socket, 200, "text/plain", response, strlen(response));
-}
-
 // Limpiar clientes inactivos
 void cleanup_inactive_clients(void) {
-    // Esta función se ejecuta periódicamente para limpiar hilos terminados
-    // Por ahora es básica, se puede mejorar después
+    pthread_mutex_lock(&main_server.clients_mutex);
+    
+    time_t now = time(NULL);
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (main_server.clients[i].active) {
+            // Verificar timeout de conexión (5 minutos)
+            if (now - main_server.clients[i].connection_time > 300) {
+                LOG_WARNING("Cliente %s timeout, desconectando", main_server.clients[i].ip_str);
+                close(main_server.clients[i].socket_fd);
+                main_server.clients[i].active = 0;
+                main_server.client_count--;
+            }
+        }
+    }
+    
+    pthread_mutex_unlock(&main_server.clients_mutex);
 }
 
 // Detener servidor
@@ -329,6 +513,9 @@ int stop_server(void) {
     
     // Esperar a que termine el hilo del servidor
     pthread_join(main_server.server_thread, NULL);
+    
+    // Mostrar estadísticas finales
+    log_file_stats();
     
     LOG_INFO("Servidor TCP detenido");
     return 1;
