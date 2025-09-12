@@ -1,6 +1,4 @@
 #include "file_handler.h"
-#include "logger.h"
-#include "config.h"
 
 // Función auxiliar para obtener el tamaño de archivo
 long get_file_size(FILE* file) {
@@ -42,10 +40,10 @@ void generate_temp_filename(char* temp_filename, size_t size, const char* origin
     char* ext = strrchr(original_filename, '.');
     if (ext) {
         snprintf(temp_filename, size, "%s/temp_%ld_%d%s", 
-                 server_config.temp_path, now, pid, ext);
+                 server_config.temp_dir, now, pid, ext);
     } else {
         snprintf(temp_filename, size, "%s/temp_%ld_%d.tmp", 
-                 server_config.temp_path, now, pid);
+                 server_config.temp_dir, now, pid);
     }
 }
 
@@ -97,6 +95,8 @@ int extract_filename_from_disposition(const char* disposition, char* filename, s
 // Parsear multipart/form-data y extraer archivo
 int parse_multipart_data(const char* data, size_t data_len, const char* boundary, 
                         file_upload_info_t* upload_info) {
+    (void)data_len; // Silenciar warning de parámetro no usado
+    
     if (!data || !boundary || !upload_info) {
         LOG_ERROR("Parámetros inválidos en parse_multipart_data");
         return -1;
@@ -211,7 +211,7 @@ int save_uploaded_file(const file_upload_info_t* upload_info, char* saved_filepa
     }
     
     // Generar nombre de archivo temporal
-    char temp_filename[MAX_PATH_LENGTH];
+    char temp_filename[512];
     generate_temp_filename(temp_filename, sizeof(temp_filename), upload_info->original_filename);
     
     // Abrir archivo para escritura
@@ -334,7 +334,7 @@ int handle_file_upload_request(int client_socket, const char* request_data, size
     }
     
     // Guardar archivo
-    char saved_filepath[MAX_PATH_LENGTH];
+    char saved_filepath[512];
     if (save_uploaded_file(&upload_info, saved_filepath, sizeof(saved_filepath)) != 0) {
         LOG_ERROR("Error guardando archivo");
         send_error_response(client_socket, 500, "Failed to save uploaded file");
@@ -362,23 +362,4 @@ int handle_file_upload_request(int client_socket, const char* request_data, size
              upload_info.original_filename, upload_info.file_size, saved_filepath);
     
     return 0;
-}
-
-// Enviar respuesta de error
-void send_error_response(int client_socket, int error_code, const char* message) {
-    char response_body[256];
-    snprintf(response_body, sizeof(response_body),
-        "{\n"
-        "  \"status\": \"error\",\n"
-        "  \"code\": %d,\n"
-        "  \"message\": \"%s\"\n"
-        "}", error_code, message);
-    
-    send_http_response(client_socket, error_code, "application/json", 
-                       response_body, strlen(response_body));
-}
-
-// Enviar respuesta de éxito
-void send_success_response(int client_socket, const char* content_type, const char* body) {
-    send_http_response(client_socket, 200, content_type, body, strlen(body));
 }

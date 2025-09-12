@@ -15,15 +15,10 @@
 #include "stb/stb_image.h"
 #include "stb/stb_image_write.h"
 
-// Incluir headers del servidor para send_http_response
-#include "server.h"
-
 // Constantes
 #define MAX_FILENAME_SIZE 256
-#define MAX_PATH_LENGTH 512
 #define MAX_BOUNDARY_SIZE 128
 #define MAX_CONTENT_TYPE_SIZE 256
-#define MAX_UPLOAD_SIZE (50 * 1024 * 1024)  // 50MB por defecto
 
 // Formatos de imagen soportados
 #define SUPPORTED_FORMATS "jpg,jpeg,png,gif"
@@ -49,19 +44,6 @@ typedef struct {
     char content_type[64];                      // Content-Type del archivo
     time_t upload_time;                         // Timestamp del upload
 } file_upload_info_t;
-
-// Estructura para estadísticas de archivos
-typedef struct {
-    int total_uploads;                          // Total de uploads procesados
-    int successful_uploads;                     // Uploads exitosos
-    int failed_uploads;                         // Uploads fallidos
-    size_t total_bytes_processed;               // Total de bytes procesados
-    time_t last_upload_time;                    // Último upload
-    char last_uploaded_file[MAX_FILENAME_SIZE]; // Último archivo subido
-} file_stats_t;
-
-// Variables globales para estadísticas (opcional)
-extern file_stats_t global_file_stats;
 
 // =============================================================================
 // FUNCIONES PRINCIPALES DE MANEJO DE ARCHIVOS
@@ -150,26 +132,6 @@ int extract_filename_from_disposition(const char* disposition,
                                      char* filename, size_t filename_size);
 
 // =============================================================================
-// FUNCIONES DE RESPUESTA HTTP
-// =============================================================================
-
-/**
- * Enviar respuesta de error HTTP con formato JSON
- * @param client_socket Socket del cliente
- * @param error_code Código de error HTTP
- * @param message Mensaje de error
- */
-void send_error_response(int client_socket, int error_code, const char* message);
-
-/**
- * Enviar respuesta de éxito HTTP
- * @param client_socket Socket del cliente
- * @param content_type Content-Type de la respuesta
- * @param body Cuerpo de la respuesta
- */
-void send_success_response(int client_socket, const char* content_type, const char* body);
-
-// =============================================================================
 // FUNCIONES DE ESTADÍSTICAS (OPCIONALES)
 // =============================================================================
 
@@ -185,12 +147,6 @@ void init_file_stats(void);
  * @param filename Nombre del archivo procesado
  */
 void update_file_stats(int success, size_t bytes_processed, const char* filename);
-
-/**
- * Obtener estadísticas actuales
- * @return Puntero a estructura de estadísticas
- */
-const file_stats_t* get_file_stats(void);
 
 /**
  * Mostrar estadísticas en logs
@@ -228,7 +184,10 @@ long long get_available_disk_space(const char* path);
 // Macro para verificar si una cadena está vacía
 #define IS_EMPTY_STRING(str) (!(str) || (str)[0] == '\0')
 
-// Macro para logging específico de file handler
+// Incluir headers del servidor DESPUÉS de las definiciones para evitar conflictos
+#include "server.h"
+
+// Macros para logging específico de file handler
 #define LOG_FILE_ERROR(fmt, ...) LOG_ERROR("[FILE_HANDLER] " fmt, ##__VA_ARGS__)
 #define LOG_FILE_INFO(fmt, ...) LOG_INFO("[FILE_HANDLER] " fmt, ##__VA_ARGS__)
 #define LOG_FILE_DEBUG(fmt, ...) LOG_DEBUG("[FILE_HANDLER] " fmt, ##__VA_ARGS__)
