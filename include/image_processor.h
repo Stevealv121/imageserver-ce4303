@@ -23,9 +23,10 @@ typedef enum
 // Estructura para información de imagen procesada
 typedef struct
 {
-    char original_path[MAX_FILEPATH];   // Ruta del archivo original
-    char equalized_path[MAX_FILEPATH];  // Ruta del archivo ecualizado
-    char classified_path[MAX_FILEPATH]; // Ruta del archivo clasificado por color
+    char original_path[MAX_FILEPATH];     // Ruta del archivo original
+    char original_filename[MAX_FILENAME]; // Solo el nombre del archivo original
+    char equalized_path[MAX_FILEPATH];    // Ruta del archivo ecualizado
+    char classified_path[MAX_FILEPATH];   // Ruta del archivo clasificado por color
 
     int width;    // Ancho de la imagen
     int height;   // Alto de la imagen

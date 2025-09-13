@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-#include <errno.h>
 
 // Función para calcular histograma de una imagen
 void calculate_histogram(const unsigned char *image_data, int width, int height, int channels, int histogram[256])
@@ -247,11 +246,20 @@ int process_image_complete(const char *input_filepath, processed_image_info_t *r
     }
 
     // 3. Generar nombres de archivos de salida
-    const char *original_filename = strrchr(input_filepath, '/');
-    if (!original_filename)
-        original_filename = input_filepath;
+    // Usar el nombre original si está disponible, sino extraer del path
+    const char *original_filename;
+    if (strlen(result->original_filename) > 0)
+    {
+        original_filename = result->original_filename;
+    }
     else
-        original_filename++; // Saltar el '/'
+    {
+        original_filename = strrchr(input_filepath, '/');
+        if (!original_filename)
+            original_filename = input_filepath;
+        else
+            original_filename++; // Saltar el '/'
+    }
 
     // Archivo ecualizado (siempre se guarda en processed)
     char equalized_filename[256];

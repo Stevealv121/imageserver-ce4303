@@ -338,7 +338,8 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
     // Procesar imagen completa
     processed_image_info_t result;
     // Establecer nombre original antes del procesamiento
-    snprintf(result.original_filename, sizeof(result.original_filename), "%s", upload_info->original_filename);
+    strncpy(result.original_filename, upload_info->original_filename, sizeof(result.original_filename) - 1);
+    result.original_filename[sizeof(result.original_filename) - 1] = '\0';
     if (process_image_complete(temp_filename, &result) == 0)
     {
         LOG_INFO("Imagen procesada exitosamente: %s", upload_info->original_filename);
