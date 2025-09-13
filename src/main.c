@@ -329,10 +329,117 @@ void show_help(const char *program_name)
     printf("  curl -F \"image=@foto.jpg\" http://localhost:1717/\n\n");
 }
 
+// Función para ejecutar comandos del sistema y mostrar salida
+int execute_system_command(const char *command)
+{
+    int result = system(command);
+    return WEXITSTATUS(result);
+}
+
+// Función para manejar comandos de servicio
+int handle_service_command(const char *command)
+{
+    char system_command[256];
+
+    if (strcmp(command, "start") == 0)
+    {
+        printf("Iniciando ImageServer...\n");
+        snprintf(system_command, sizeof(system_command), "systemctl start ImageServer");
+        int result = execute_system_command(system_command);
+        if (result == 0)
+        {
+            printf("ImageServer iniciado correctamente\n");
+            // Mostrar status después de iniciar
+            snprintf(system_command, sizeof(system_command), "systemctl status ImageServer --no-pager -l");
+            execute_system_command(system_command);
+        }
+        else
+        {
+            printf("Error iniciando ImageServer\n");
+        }
+        return result;
+    }
+
+    else if (strcmp(command, "stop") == 0)
+    {
+        printf("Deteniendo ImageServer...\n");
+        snprintf(system_command, sizeof(system_command), "systemctl stop ImageServer");
+        int result = execute_system_command(system_command);
+        if (result == 0)
+        {
+            printf("ImageServer detenido correctamente\n");
+        }
+        else
+        {
+            printf("Error deteniendo ImageServer\n");
+        }
+        return result;
+    }
+
+    else if (strcmp(command, "status") == 0)
+    {
+        printf("Estado de ImageServer:\n");
+        snprintf(system_command, sizeof(system_command), "systemctl status ImageServer --no-pager -l");
+        int result = execute_system_command(system_command);
+
+        // Información adicional
+        printf("\n=== Información Adicional ===\n");
+
+        // Verificar proceso
+        printf("Procesos:\n");
+        execute_system_command("ps aux | grep '[i]mageserver' || echo 'No hay procesos imageserver ejecutándose'");
+
+        // Verificar puerto
+        printf("\nPuerto 1717:\n");
+        execute_system_command("netstat -tlnp 2>/dev/null | grep ':1717' || echo 'Puerto 1717 no está en uso'");
+
+        // Verificar archivo PID
+        printf("\nArchivo PID:\n");
+        if (access("/var/run/imageserver.pid", F_OK) == 0)
+        {
+            execute_system_command("echo -n 'PID: ' && cat /var/run/imageserver.pid");
+        }
+        else
+        {
+            printf("Archivo PID no existe\n");
+        }
+
+        return result;
+    }
+
+    else if (strcmp(command, "restart") == 0)
+    {
+        printf("Reiniciando ImageServer...\n");
+        snprintf(system_command, sizeof(system_command), "systemctl restart ImageServer");
+        int result = execute_system_command(system_command);
+        if (result == 0)
+        {
+            printf("ImageServer reiniciado correctamente\n");
+            // Esperar un poco y mostrar status
+            sleep(2);
+            snprintf(system_command, sizeof(system_command), "systemctl status ImageServer --no-pager -l");
+            execute_system_command(system_command);
+        }
+        else
+        {
+            printf("Error reiniciando ImageServer\n");
+        }
+        return result;
+    }
+
+    else
+    {
+        printf("Error: Comando de servicio desconocido '%s'\n", command);
+        printf("Comandos disponibles: start, stop, status, restart\n");
+        return 1;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     int daemon_mode = 0;
     int test_server = 0;
+    char *service_command = NULL;
 
     printf("=== ImageServer v1.0 ===\n");
 
@@ -352,6 +459,23 @@ int main(int argc, char *argv[])
             show_help(argv[0]);
             return 0;
         }
+        // NUEVOS COMANDOS DE SERVICIO
+        else if (strcmp(argv[i], "start") == 0)
+        {
+            service_command = "start";
+        }
+        else if (strcmp(argv[i], "stop") == 0)
+        {
+            service_command = "stop";
+        }
+        else if (strcmp(argv[i], "status") == 0)
+        {
+            service_command = "status";
+        }
+        else if (strcmp(argv[i], "restart") == 0)
+        {
+            service_command = "restart";
+        }
         else
         {
             printf("Error: Opción desconocida '%s'\n", argv[i]);
@@ -360,7 +484,21 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Verificar que no se usen ambas opciones
+    // MANEJAR COMANDOS DE SERVICIO PRIMERO
+    if (service_command)
+    {
+        // Verificar que se ejecute como root para comandos de servicio
+        if (getuid() != 0)
+        {
+            printf("Error: Los comandos de servicio requieren permisos de root\n");
+            printf("Ejecuta: sudo %s %s\n", argv[0], service_command);
+            return 1;
+        }
+
+        return handle_service_command(service_command);
+    }
+
+    // Verificar que no se usen múltiples opciones
     if (daemon_mode && test_server)
     {
         printf("Error: No se pueden usar -d y --test-server al mismo tiempo\n");
