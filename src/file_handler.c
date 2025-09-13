@@ -3,6 +3,7 @@
 #include "config.h"
 #include "logger.h"
 #include "file_handler.h"
+#include "image_processor.h"
 
 // Función auxiliar para obtener el tamaño de archivo
 long get_file_size(FILE *file)
@@ -295,7 +296,6 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
         return -1;
     }
 
-    // Verificar formato soportado
     if (!is_supported_format(upload_info->original_filename))
     {
         LOG_ERROR("Formato de archivo no soportado: %s", upload_info->original_filename);
@@ -306,7 +306,7 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
     char temp_filename[512];
     generate_temp_filename(temp_filename, sizeof(temp_filename), upload_info->original_filename);
 
-    // Abrir archivo para escritura
+    // Guardar archivo temporal
     FILE *file = fopen(temp_filename, "wb");
     if (!file)
     {
@@ -314,7 +314,6 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
         return -1;
     }
 
-    // Escribir datos del archivo
     size_t written = fwrite(upload_info->file_data, 1, upload_info->file_size, file);
     fclose(file);
 
@@ -325,7 +324,7 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
         return -1;
     }
 
-    // Verificar que el archivo se puede cargar con STB
+    // Verificar que es imagen válida
     int width, height, channels;
     unsigned char *img_data = stbi_load(temp_filename, &width, &height, &channels, 0);
     if (!img_data)
@@ -334,15 +333,25 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
         unlink(temp_filename);
         return -1;
     }
-
     stbi_image_free(img_data);
 
-    LOG_INFO("Archivo guardado exitosamente: %s (%dx%d, %d canales)",
-             temp_filename, width, height, channels);
+    // Procesar imagen completa
+    processed_image_info_t result;
+    if (process_image_complete(temp_filename, &result) == 0)
+    {
+        LOG_INFO("Imagen procesada exitosamente: %s", upload_info->original_filename);
+        strncpy(saved_filepath, result.equalized_path, filepath_size - 1);
+        saved_filepath[filepath_size - 1] = '\0';
+    }
+    else
+    {
+        LOG_ERROR("Error procesando imagen: %s", upload_info->original_filename);
+        strncpy(saved_filepath, temp_filename, filepath_size - 1);
+        saved_filepath[filepath_size - 1] = '\0';
+    }
 
-    // Copiar path del archivo guardado
-    strncpy(saved_filepath, temp_filename, filepath_size - 1);
-    saved_filepath[filepath_size - 1] = '\0';
+    // Limpiar archivo temporal
+    cleanup_temp_image(temp_filename);
 
     return 0;
 }
