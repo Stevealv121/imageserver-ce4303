@@ -114,11 +114,11 @@ int extract_filename_from_disposition(const char *disposition, char *filename, s
     return (i > 0) ? 1 : 0;
 }
 
-// Parsear multipart/form-data y extraer archivo
 int parse_multipart_data(const char *data, size_t data_len, const char *boundary,
                          file_upload_info_t *upload_info)
 {
-    (void)data_len; // Silenciar warning de parámetro no usado
+    LOG_DEBUG("Datos recibidos (primeros 100 bytes): %.100s", data);
+    LOG_DEBUG("Datos recibidos (últimos 100 bytes): %.100s", data + data_len - 100);
 
     if (!data || !boundary || !upload_info)
     {
@@ -131,6 +131,7 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
     snprintf(full_boundary, sizeof(full_boundary), "--%s", boundary);
 
     LOG_DEBUG("Buscando boundary: %s", full_boundary);
+    LOG_DEBUG("Total received data: %zu", data_len);
 
     // Buscar inicio del boundary
     const char *boundary_start = strstr(data, full_boundary);
@@ -153,6 +154,13 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
         headers_start += 1;
     }
 
+    // Verificar que no nos salimos de los datos
+    if (headers_start >= data + data_len)
+    {
+        LOG_ERROR("Headers start fuera de los datos recibidos");
+        return -1;
+    }
+
     // Buscar el final de los headers (línea vacía)
     const char *headers_end = strstr(headers_start, "\r\n\r\n");
     if (!headers_end)
@@ -169,6 +177,17 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
     {
         headers_end += 4;
     }
+
+    // Verificar que headers_end está dentro de los datos
+    if (headers_end >= data + data_len)
+    {
+        LOG_ERROR("Headers end fuera de los datos recibidos");
+        return -1;
+    }
+
+    // Debug: posiciones importantes
+    LOG_DEBUG("Headers start position: %zu", headers_start - data);
+    LOG_DEBUG("Headers end position: %zu", headers_end - data);
 
     // Extraer headers
     size_t headers_len = headers_end - headers_start;
@@ -198,40 +217,35 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
     // El contenido del archivo empieza después de los headers
     const char *file_data_start = headers_end;
 
-    // Buscar el boundary final (puede ser --boundary-- o --boundary)
+    // Buscar el boundary final
     char end_boundary[256];
     const char *file_data_end = NULL;
 
-    // Intentar primero con boundary de cierre (--boundary--)
-    snprintf(end_boundary, sizeof(end_boundary), "\r\n--%s--", boundary);
-    file_data_end = strstr(file_data_start, end_boundary);
+    // Intentar diferentes formatos de boundary
+    const char *boundary_patterns[] = {
+        "\r\n--%s--", // CRLF + --boundary--
+        "\n--%s--",   // LF + --boundary--
+        "\r\n--%s",   // CRLF + --boundary (siguiente parte)
+        "\n--%s",     // LF + --boundary (siguiente parte)
+        NULL};
 
-    if (!file_data_end)
+    for (int i = 0; boundary_patterns[i] != NULL; i++)
     {
-        // Intentar sin \r\n
-        snprintf(end_boundary, sizeof(end_boundary), "\n--%s--", boundary);
+        snprintf(end_boundary, sizeof(end_boundary), boundary_patterns[i], boundary);
         file_data_end = strstr(file_data_start, end_boundary);
+
+        if (file_data_end)
+        {
+            LOG_DEBUG("Boundary encontrado con patrón %d: %s", i, end_boundary);
+            break;
+        }
     }
 
     if (!file_data_end)
     {
-        // Intentar boundary normal (sin --)
-        snprintf(end_boundary, sizeof(end_boundary), "\r\n--%s", boundary);
-        file_data_end = strstr(file_data_start, end_boundary);
-    }
-
-    if (!file_data_end)
-    {
-        // Última opción: sin \r\n y sin --
-        snprintf(end_boundary, sizeof(end_boundary), "\n--%s", boundary);
-        file_data_end = strstr(file_data_start, end_boundary);
-    }
-
-    if (!file_data_end)
-    {
-        // Si aún no encontramos boundary, usar el final de los datos
+        // Si no encontramos boundary, usar el final de los datos
         LOG_WARNING("No se encontró boundary final, usando final de datos");
-        file_data_end = file_data_start + strlen(file_data_start);
+        file_data_end = data + data_len;
 
         // Retroceder para quitar posibles \r\n finales
         while (file_data_end > file_data_start &&
@@ -241,10 +255,21 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
         }
     }
 
+    // Debug: posiciones del archivo
+    LOG_DEBUG("File data start position: %zu", file_data_start - data);
+    LOG_DEBUG("File data end position: %zu", file_data_end - data);
+
     // Calcular tamaño del archivo
     upload_info->file_size = file_data_end - file_data_start;
 
     LOG_INFO("Tamaño de archivo extraído: %zu bytes", upload_info->file_size);
+
+    // Verificar que el tamaño es válido
+    if (file_data_end < file_data_start)
+    {
+        LOG_ERROR("Posiciones inválidas: end < start");
+        return -1;
+    }
 
     // Verificar tamaño máximo
     size_t max_size = server_config.max_image_size_mb * 1024 * 1024;
