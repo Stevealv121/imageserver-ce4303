@@ -12,6 +12,7 @@
 #include "daemon.h"
 #include "file_handler.h"
 #include "server.h"
+#include "priority_queue.h"
 
 // Función para crear directorios necesarios (mejorada)
 int create_directories(void)

@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "file_handler.h"
 #include "image_processor.h"
+#include "priority_queue.h"
 
 // Función auxiliar para obtener el tamaño de archivo
 long get_file_size(FILE *file)
@@ -361,7 +362,7 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
     return 0;
 }
 
-// Procesar upload HTTP POST completo
+// Procesar upload HTTP POST completo con cola de prioridad
 int handle_file_upload_request(int client_socket, const char *request_data, size_t request_len,
                                const char *client_ip)
 {
@@ -454,34 +455,89 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
         return -1;
     }
 
-    // Guardar archivo
-    char saved_filepath[512];
-    if (save_uploaded_file(&upload_info, saved_filepath, sizeof(saved_filepath)) != 0)
+    // Verificar formato soportado
+    if (!is_supported_format(upload_info.original_filename))
     {
-        LOG_ERROR("Error guardando archivo");
-        send_error_response(client_socket, 500, "Failed to save uploaded file");
+        LOG_ERROR("Formato de archivo no soportado: %s", upload_info.original_filename);
+        send_error_response(client_socket, 400, "Unsupported file format");
         return -1;
     }
 
-    // Enviar respuesta de éxito
+    // Verificar tamaño máximo
+    size_t max_size = server_config.max_image_size_mb * 1024 * 1024;
+    if (upload_info.file_size > max_size)
+    {
+        LOG_ERROR("Archivo demasiado grande: %zu bytes (máximo: %zu MB)",
+                  upload_info.file_size, server_config.max_image_size_mb);
+        send_error_response(client_socket, 413, "File too large");
+        return -1;
+    }
+
+    // Generar nombre de archivo temporal
+    char temp_filename[512];
+    generate_temp_filename(temp_filename, sizeof(temp_filename), upload_info.original_filename);
+
+    // Guardar archivo temporal
+    FILE *file = fopen(temp_filename, "wb");
+    if (!file)
+    {
+        LOG_ERROR("No se pudo crear archivo temporal: %s (%s)", temp_filename, strerror(errno));
+        send_error_response(client_socket, 500, "Failed to create temporary file");
+        return -1;
+    }
+
+    size_t written = fwrite(upload_info.file_data, 1, upload_info.file_size, file);
+    fclose(file);
+
+    if (written != upload_info.file_size)
+    {
+        LOG_ERROR("Error escribiendo archivo: escrito %zu de %zu bytes", written, upload_info.file_size);
+        unlink(temp_filename);
+        send_error_response(client_socket, 500, "Failed to write temporary file");
+        return -1;
+    }
+
+    // Verificar que es imagen válida
+    int width, height, channels;
+    unsigned char *img_data = stbi_load(temp_filename, &width, &height, &channels, 0);
+    if (!img_data)
+    {
+        LOG_ERROR("Archivo no es una imagen válida: %s", stbi_failure_reason());
+        unlink(temp_filename);
+        send_error_response(client_socket, 400, "Invalid image file");
+        return -1;
+    }
+    stbi_image_free(img_data);
+
+    // Encolar archivo para procesamiento en lugar de procesarlo directamente
+    if (enqueue_file_for_processing(&upload_info, temp_filename, client_ip, client_socket) != 0)
+    {
+        LOG_ERROR("Error encolando archivo para procesamiento");
+        unlink(temp_filename);
+        send_error_response(client_socket, 500, "Failed to queue file for processing");
+        return -1;
+    }
+
+    // Enviar respuesta inmediata de que el archivo fue recibido y encolado
     char response_body[512];
     snprintf(response_body, sizeof(response_body),
              "{\n"
-             "  \"status\": \"success\",\n"
-             "  \"message\": \"File uploaded successfully\",\n"
+             "  \"status\": \"queued\",\n"
+             "  \"message\": \"File queued for processing\",\n"
              "  \"filename\": \"%s\",\n"
              "  \"size\": %zu,\n"
-             "  \"saved_path\": \"%s\"\n"
+             "  \"queue_position\": %d,\n"
+             "  \"note\": \"Processing files by size - smaller files processed first\"\n"
              "}",
-             upload_info.original_filename, upload_info.file_size, saved_filepath);
+             upload_info.original_filename, upload_info.file_size, get_queue_size());
 
     send_success_response(client_socket, "application/json", response_body);
 
     // Log de actividad del cliente
-    log_client_activity(client_ip, upload_info.original_filename, "upload", "success");
+    log_client_activity(client_ip, upload_info.original_filename, "upload", "queued");
 
-    LOG_INFO("Upload completado: %s (%zu bytes) guardado como %s",
-             upload_info.original_filename, upload_info.file_size, saved_filepath);
+    LOG_INFO("Upload encolado: %s (%zu bytes) desde %s - Posición en cola: %d",
+             upload_info.original_filename, upload_info.file_size, client_ip, get_queue_size());
 
     return 0;
 }

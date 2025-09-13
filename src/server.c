@@ -2,6 +2,7 @@
 #include "logger.h"
 #include "config.h"
 #include "file_handler.h"
+#include "priority_queue.h"
 
 // Variable global del servidor
 tcp_server_t main_server;
@@ -48,6 +49,14 @@ int init_server(void)
         return 0;
     }
 
+    // Inicializar cola de prioridad
+    if (!init_priority_queue())
+    {
+        LOG_ERROR("Error inicializando cola de prioridad");
+        pthread_mutex_destroy(&main_server.clients_mutex);
+        return 0;
+    }
+
     // Inicializar estadísticas de archivos
     init_file_stats();
 
@@ -56,6 +65,8 @@ int init_server(void)
     if (main_server.server_socket == -1)
     {
         LOG_ERROR("Error creando socket: %s", strerror(errno));
+        destroy_priority_queue();
+        pthread_mutex_destroy(&main_server.clients_mutex);
         return 0;
     }
 
@@ -87,6 +98,8 @@ int init_server(void)
     {
         LOG_ERROR("Error en bind puerto %d: %s", server_config.port, strerror(errno));
         close(main_server.server_socket);
+        destroy_priority_queue();
+        pthread_mutex_destroy(&main_server.clients_mutex);
         return 0;
     }
 
@@ -110,6 +123,14 @@ int start_server(void)
     if (listen(main_server.server_socket, server_config.max_connections) < 0)
     {
         LOG_ERROR("Error en listen: %s", strerror(errno));
+        main_server.status = SERVER_STOPPED;
+        return 0;
+    }
+
+    // Iniciar procesador de archivos
+    if (!start_file_processor())
+    {
+        LOG_ERROR("Error iniciando procesador de archivos");
         main_server.status = SERVER_STOPPED;
         return 0;
     }
@@ -447,6 +468,11 @@ int handle_get_request(int client_socket, const char *path, const char *client_i
                  "  \"port\": %d,\n"
                  "  \"active_connections\": %d,\n"
                  "  \"max_connections\": %d,\n"
+                 "  \"processing_queue\": {\n"
+                 "    \"size\": %d,\n"
+                 "    \"max_size\": %d,\n"
+                 "    \"processor_status\": \"%s\"\n"
+                 "  },\n"
                  "  \"stats\": {\n"
                  "    \"total_uploads\": %d,\n"
                  "    \"successful_uploads\": %d,\n"
@@ -457,6 +483,7 @@ int handle_get_request(int client_socket, const char *path, const char *client_i
                  "  \"max_file_size_mb\": %d\n"
                  "}",
                  server_config.port, main_server.client_count, server_config.max_connections,
+                 get_queue_size(), MAX_QUEUE_SIZE, processor_running ? "running" : "stopped",
                  stats->total_uploads, stats->successful_uploads, stats->failed_uploads,
                  stats->total_bytes_processed, server_config.supported_formats,
                  server_config.max_image_size_mb);
@@ -473,10 +500,31 @@ int handle_get_request(int client_socket, const char *path, const char *client_i
             "  \"message\": \"POST multipart/form-data to this endpoint\",\n"
             "  \"supported_formats\": [\"jpg\", \"jpeg\", \"png\", \"gif\"],\n"
             "  \"max_size_mb\": " STR(MAX_IMAGE_SIZE_MB) ",\n"
-                                                         "  \"field_name\": \"image\"\n"
+                                                         "  \"field_name\": \"image\",\n"
+                                                         "  \"processing_note\": \"Files are processed by size - smaller files first\"\n"
                                                          "}";
 
         send_success_response(client_socket, "application/json", upload_info);
+        log_client_activity(client_ip, path, "GET", "success");
+        return 0;
+    }
+    else if (strcmp(path, "/queue") == 0)
+    {
+        // NUEVA RUTA: Información específica de la cola
+        char queue_info[512];
+        snprintf(queue_info, sizeof(queue_info),
+                 "{\n"
+                 "  \"queue_size\": %d,\n"
+                 "  \"max_queue_size\": %d,\n"
+                 "  \"processor_running\": %s,\n"
+                 "  \"queue_full\": %s,\n"
+                 "  \"processing_policy\": \"Smaller files processed first\"\n"
+                 "}",
+                 get_queue_size(), MAX_QUEUE_SIZE,
+                 processor_running ? "true" : "false",
+                 is_queue_full() ? "true" : "false");
+
+        send_success_response(client_socket, "application/json", queue_info);
         log_client_activity(client_ip, path, "GET", "success");
         return 0;
     }
@@ -641,6 +689,10 @@ void cleanup_server(void)
     LOG_INFO("Limpiando recursos del servidor...");
 
     stop_server();
+
+    // Detener procesador de archivos y destruir cola
+    stop_file_processor();
+    destroy_priority_queue();
 
     // Cerrar todas las conexiones de clientes
     pthread_mutex_lock(&main_server.clients_mutex);
