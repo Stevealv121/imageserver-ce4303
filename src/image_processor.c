@@ -247,19 +247,22 @@ int process_image_complete(const char *input_filepath, processed_image_info_t *r
     }
 
     // 3. Generar nombres de archivos de salida
-    // Usar el nombre original si está disponible, sino extraer del path
+    // USAR EL NOMBRE ORIGINAL SI ESTÁ DISPONIBLE EN RESULT
     const char *original_filename;
     if (strlen(result->original_filename) > 0)
     {
         original_filename = result->original_filename;
+        LOG_DEBUG("Usando nombre original de result: %s", original_filename);
     }
     else
     {
+        // Fallback: extraer del path si no hay nombre en result
         original_filename = strrchr(input_filepath, '/');
         if (!original_filename)
             original_filename = input_filepath;
         else
             original_filename++; // Saltar el '/'
+        LOG_DEBUG("Usando nombre extraído del path: %s", original_filename);
     }
 
     // Archivo ecualizado (siempre se guarda en processed)

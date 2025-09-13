@@ -338,24 +338,41 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
     // Procesar imagen completa
     processed_image_info_t result;
     memset(&result, 0, sizeof(result));
+
     // Establecer nombre original antes del procesamiento
     strncpy(result.original_filename, upload_info->original_filename, sizeof(result.original_filename) - 1);
     result.original_filename[sizeof(result.original_filename) - 1] = '\0';
+
     if (process_image_complete(temp_filename, &result) == 0)
     {
         LOG_INFO("Imagen procesada exitosamente: %s", upload_info->original_filename);
-        strncpy(saved_filepath, result.equalized_path, filepath_size - 1);
-        saved_filepath[filepath_size - 1] = '\0';
+
+        // Verificar que tenemos una ruta válida
+        if (strlen(result.equalized_path) > 0)
+        {
+            strncpy(saved_filepath, result.equalized_path, filepath_size - 1);
+            saved_filepath[filepath_size - 1] = '\0';
+        }
+        else
+        {
+            LOG_ERROR("Ruta de archivo procesado vacía");
+            strncpy(saved_filepath, temp_filename, filepath_size - 1);
+            saved_filepath[filepath_size - 1] = '\0';
+        }
     }
     else
     {
         LOG_ERROR("Error procesando imagen: %s", upload_info->original_filename);
         strncpy(saved_filepath, temp_filename, filepath_size - 1);
         saved_filepath[filepath_size - 1] = '\0';
+        // No retornar error aquí, solo guardar el temporal
     }
 
-    // Limpiar archivo temporal
-    cleanup_temp_image(temp_filename);
+    // Limpiar archivo temporal siempre
+    if (cleanup_temp_image(temp_filename) == 0)
+    {
+        LOG_WARNING("No se pudo eliminar archivo temporal: %s", temp_filename);
+    }
 
     return 0;
 }
