@@ -351,13 +351,6 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
         strncpy(saved_filepath, temp_filename, filepath_size - 1);
         saved_filepath[filepath_size - 1] = '\0';
     }
-    else
-    {
-        LOG_ERROR("Error procesando imagen: %s", upload_info->original_filename);
-        strncpy(saved_filepath, temp_filename, filepath_size - 1);
-        saved_filepath[filepath_size - 1] = '\0';
-        // No retornar error aquí, solo guardar el temporal
-    }
 
     // Limpiar archivo temporal siempre
     if (cleanup_temp_image(temp_filename) == 0)
