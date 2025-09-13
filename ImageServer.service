@@ -1,0 +1,28 @@
+[Unit]
+Description=ImageServer - Servidor de Procesamiento de Imágenes
+Documentation=ImageServer daemon for image processing with histogram equalization
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/imageserver /etc/server
+
+[Service]
+Type=forking
+User=root
+Group=root
+ExecStartPre=/bin/mkdir -p /var/imageserver/images/processed /var/imageserver/images/verdes /var/imageserver/images/rojas /var/imageserver/images/azules /var/imageserver/images/temp
+ExecStartPre=/bin/mkdir -p /etc/server /var/log/imageserver
+ExecStart=/opt/imageserver/bin/imageserver -d
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -TERM $MAINPID
+PIDFile=/var/run/imageserver.pid
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+# Variables de entorno
+Environment=CONFIG_FILE=/etc/server/config.conf
+Environment=LOG_FILE=/var/log/imageserver/imageserver.log
+
+[Install]
+WantedBy=multi-user.target
