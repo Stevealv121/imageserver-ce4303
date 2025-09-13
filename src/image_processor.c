@@ -215,13 +215,20 @@ const char *get_color_directory(color_category_t color)
 }
 
 // Función para procesar imagen completa
-int process_image_complete(const char *input_filepath, processed_image_info_t *result)
+int process_image_complete(const char *input_filepath, const char *original_filename, processed_image_info_t *result)
 {
     LOG_INFO("Iniciando procesamiento completo de imagen: %s", input_filepath);
 
     // Inicializar estructura de resultado
     memset(result, 0, sizeof(processed_image_info_t));
     strncpy(result->original_path, input_filepath, sizeof(result->original_path) - 1);
+
+    // Guardar el nombre original en la estructura result
+    if (original_filename && strlen(original_filename) > 0)
+    {
+        strncpy(result->original_filename, original_filename, sizeof(result->original_filename) - 1);
+        result->original_filename[sizeof(result->original_filename) - 1] = '\0';
+    }
 
     // Cargar imagen
     int width, height, channels;
@@ -247,32 +254,32 @@ int process_image_complete(const char *input_filepath, processed_image_info_t *r
     }
 
     // 3. Generar nombres de archivos de salida
-    // USAR EL NOMBRE ORIGINAL SI ESTÁ DISPONIBLE EN RESULT
-    const char *original_filename;
-    if (strlen(result->original_filename) > 0)
+    // USAR EL NOMBRE ORIGINAL SI ESTÁ DISPONIBLE
+    const char *filename_to_use;
+    if (original_filename && strlen(original_filename) > 0)
     {
-        original_filename = result->original_filename;
-        LOG_DEBUG("Usando nombre original de result: %s", original_filename);
+        filename_to_use = original_filename;
+        LOG_DEBUG("Usando nombre original proporcionado: %s", filename_to_use);
     }
     else
     {
-        // Fallback: extraer del path si no hay nombre en result
-        original_filename = strrchr(input_filepath, '/');
-        if (!original_filename)
-            original_filename = input_filepath;
+        // Fallback: extraer del path
+        filename_to_use = strrchr(input_filepath, '/');
+        if (!filename_to_use)
+            filename_to_use = input_filepath;
         else
-            original_filename++; // Saltar el '/'
-        LOG_DEBUG("Usando nombre extraído del path: %s", original_filename);
+            filename_to_use++; // Saltar el '/'
+        LOG_DEBUG("Usando nombre extraído del path: %s", filename_to_use);
     }
 
     // Archivo ecualizado (siempre se guarda en processed)
     char equalized_filename[256];
-    generate_processed_filename(original_filename, "equalized", equalized_filename, sizeof(equalized_filename));
+    generate_processed_filename(filename_to_use, "equalized", equalized_filename, sizeof(equalized_filename));
     snprintf(result->equalized_path, sizeof(result->equalized_path), "%s/%s", server_config.processed_path, equalized_filename);
 
     // 4. Guardar imagen ecualizada
     int save_result = 0;
-    const char *ext = strrchr(original_filename, '.');
+    const char *ext = strrchr(filename_to_use, '.');
     if (ext && (strcmp(ext, ".png") == 0 || strcmp(ext, ".PNG") == 0))
     {
         save_result = stbi_write_png(result->equalized_path, width, height, channels, image_data, width * channels);
@@ -299,7 +306,7 @@ int process_image_complete(const char *input_filepath, processed_image_info_t *r
         const char *color_names[] = {"undefined", "red", "green", "blue"};
 
         char classified_filename[256];
-        generate_processed_filename(original_filename, color_names[predominant_color], classified_filename, sizeof(classified_filename));
+        generate_processed_filename(filename_to_use, color_names[predominant_color], classified_filename, sizeof(classified_filename));
         snprintf(result->classified_path, sizeof(result->classified_path), "%s/%s", color_dir, classified_filename);
 
         // Guardar copia en directorio de color

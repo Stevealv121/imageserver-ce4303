@@ -99,10 +99,11 @@ void generate_processed_filename(const char *original_filename, const char *suff
 /**
  * Procesa una imagen completa: ecualización y clasificación
  * @param input_filepath: ruta del archivo de entrada
+ * @param original_filename: nombre del archivo original (para generar nombres de salida)
  * @param result: estructura para almacenar información del resultado
  * @return: 0 si exitoso, -1 si error
  */
-int process_image_complete(const char *input_filepath, processed_image_info_t *result);
+int process_image_complete(const char *input_filepath, const char *original_filename, processed_image_info_t *result);
 
 /**
  * Limpia archivo temporal después del procesamiento
