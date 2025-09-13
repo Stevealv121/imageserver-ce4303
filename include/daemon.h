@@ -11,7 +11,7 @@
 #include <errno.h>
 #include <string.h>
 
-#define PID_FILE "/var/run/imageserver.pid"
+#define PID_FILE "/run/imageserver.pid"
 #define DAEMON_NAME "imageserver"
 
 // Variables globales del daemon
