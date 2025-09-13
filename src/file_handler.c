@@ -337,6 +337,7 @@ int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepa
 
     // Procesar imagen completa
     processed_image_info_t result;
+    memset(&result, 0, sizeof(result));
     // Establecer nombre original antes del procesamiento
     strncpy(result.original_filename, upload_info->original_filename, sizeof(result.original_filename) - 1);
     result.original_filename[sizeof(result.original_filename) - 1] = '\0';

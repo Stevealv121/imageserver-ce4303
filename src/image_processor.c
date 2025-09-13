@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <errno.h>
 
 // Función para calcular histograma de una imagen
 void calculate_histogram(const unsigned char *image_data, int width, int height, int channels, int histogram[256])
