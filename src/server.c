@@ -103,6 +103,23 @@ int init_server(void)
         return 0;
     }
 
+    // Inicializar cola de prioridad
+    if (!init_priority_queue())
+    {
+        LOG_ERROR("Error inicializando cola de prioridad");
+        close(main_server.server_socket);
+        return 0;
+    }
+
+    // Iniciar procesador de archivos
+    if (!start_file_processor())
+    {
+        LOG_ERROR("Error iniciando procesador de archivos");
+        destroy_priority_queue();
+        close(main_server.server_socket);
+        return 0;
+    }
+
     LOG_INFO("Servidor inicializado correctamente en puerto %d", server_config.port);
     return 1;
 }
