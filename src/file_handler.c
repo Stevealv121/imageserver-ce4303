@@ -6,6 +6,8 @@
 #include "image_processor.h"
 #include "priority_queue.h"
 
+static int temp_file_counter = 0;
+
 // Función auxiliar para obtener el tamaño de archivo
 long get_file_size(FILE *file)
 {
@@ -49,17 +51,26 @@ void generate_temp_filename(char *temp_filename, size_t size, const char *origin
     time_t now = time(NULL);
     pid_t pid = getpid();
 
+    // Usar contador atómico para evitar duplicados
+    static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_lock(&counter_mutex);
+    temp_file_counter++;
+    int counter = temp_file_counter;
+    pthread_mutex_unlock(&counter_mutex);
+
     char *ext = strrchr(original_filename, '.');
     if (ext)
     {
-        snprintf(temp_filename, size, "%s/temp_%ld_%d%s",
-                 server_config.temp_path, now, pid, ext);
+        snprintf(temp_filename, size, "%s/temp_%ld_%d_%d%s",
+                 server_config.temp_path, now, pid, counter, ext);
     }
     else
     {
-        snprintf(temp_filename, size, "%s/temp_%ld_%d.tmp",
-                 server_config.temp_path, now, pid);
+        snprintf(temp_filename, size, "%s/temp_%ld_%d_%d.tmp",
+                 server_config.temp_path, now, pid, counter);
     }
+
+    LOG_DEBUG("Generando archivo temporal: %s", temp_filename);
 }
 
 // Buscar boundary en Content-Type header
@@ -119,8 +130,12 @@ int extract_filename_from_disposition(const char *disposition, char *filename, s
 int parse_multipart_data(const char *data, size_t data_len, const char *boundary,
                          file_upload_info_t *upload_info)
 {
-    LOG_DEBUG("Datos recibidos (primeros 100 bytes): %.100s", data);
-    LOG_DEBUG("Datos recibidos (últimos 100 bytes): %.100s", data + data_len - 100);
+
+    LOG_DEBUG("=== DEBUGGING MULTIPART PARSER ===");
+    LOG_DEBUG("Boundary recibido: '%s'", boundary);
+    LOG_DEBUG("Tamaño total de datos: %zu", data_len);
+    LOG_DEBUG("Primeros 200 bytes: %.200s", data);
+    LOG_DEBUG("Últimos 200 bytes: %.200s", data + (data_len > 200 ? data_len - 200 : 0));
 
     if (!data || !boundary || !upload_info)
     {
@@ -131,6 +146,39 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
     // Crear boundary delimitador completo
     char full_boundary[256];
     snprintf(full_boundary, sizeof(full_boundary), "--%s", boundary);
+    LOG_DEBUG("Full boundary buscado: '%s'", full_boundary);
+
+    // Buscar todos los boundaries en los datos
+    const char *search_ptr = data;
+    int boundary_count = 0;
+    LOG_DEBUG("Buscando todas las ocurrencias de boundary:");
+    while ((search_ptr = strstr(search_ptr, full_boundary)) != NULL)
+    {
+        size_t pos = search_ptr - data;
+        LOG_DEBUG("  Boundary #%d encontrado en posición: %zu", ++boundary_count, pos);
+
+        // Mostrar contexto alrededor del boundary
+        size_t start = (pos > 50) ? pos - 50 : 0;
+        size_t end = (pos + 100 < data_len) ? pos + 100 : data_len;
+        char context[200];
+        size_t context_len = end - start;
+        if (context_len >= sizeof(context))
+            context_len = sizeof(context) - 1;
+        strncpy(context, data + start, context_len);
+        context[context_len] = '\0';
+        LOG_DEBUG("  Contexto: '%.150s'", context);
+
+        search_ptr += strlen(full_boundary);
+    }
+
+    if (boundary_count == 0)
+    {
+        LOG_ERROR("No se encontró ningún boundary en los datos");
+        return -1;
+    }
+
+    LOG_DEBUG("Total boundaries encontrados: %d", boundary_count);
+    LOG_DEBUG("===================================");
 
     LOG_DEBUG("Buscando boundary: %s", full_boundary);
     LOG_DEBUG("Total received data: %zu", data_len);
