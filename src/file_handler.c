@@ -131,283 +131,222 @@ int parse_multipart_data(const char *data, size_t data_len, const char *boundary
                          file_upload_info_t *upload_info)
 {
 
-    LOG_DEBUG("=== DEBUGGING MULTIPART PARSER ===");
-    LOG_DEBUG("Boundary recibido: '%s'", boundary);
-    LOG_DEBUG("Tamaño total de datos: %zu", data_len);
-    LOG_DEBUG("Primeros 200 bytes: %.200s", data);
-    LOG_DEBUG("Últimos 200 bytes: %.200s", data + (data_len > 200 ? data_len - 200 : 0));
-
-    if (!data || !boundary || !upload_info)
+    if (!data || !boundary || !upload_info || data_len == 0)
     {
-        LOG_ERROR("Parámetros inválidos en parse_multipart_data");
-        return -1;
+        LOG_FILE_ERROR("Parámetros inválidos para parsing multipart");
+        return FILE_UPLOAD_ERROR_INVALID_PARAMS;
     }
 
-    // Crear boundary delimitador completo
-    char full_boundary[256];
+    // Limpiar estructura
+    memset(upload_info, 0, sizeof(file_upload_info_t));
+
+    // Construir boundary completo
+    char full_boundary[MAX_BOUNDARY_SIZE + 4];
     snprintf(full_boundary, sizeof(full_boundary), "--%s", boundary);
-    LOG_DEBUG("Full boundary buscado: '%s'", full_boundary);
 
-    // Buscar todos los boundaries en los datos
-    const char *search_ptr = data;
-    int boundary_count = 0;
-    LOG_DEBUG("Buscando todas las ocurrencias de boundary:");
-    while ((search_ptr = strstr(search_ptr, full_boundary)) != NULL)
-    {
-        size_t pos = search_ptr - data;
-        LOG_DEBUG("  Boundary #%d encontrado en posición: %zu", ++boundary_count, pos);
+    // Construir boundary de cierre
+    char closing_boundary[MAX_BOUNDARY_SIZE + 6];
+    snprintf(closing_boundary, sizeof(closing_boundary), "--%s--", boundary);
 
-        // Mostrar contexto alrededor del boundary
-        size_t start = (pos > 50) ? pos - 50 : 0;
-        size_t end = (pos + 100 < data_len) ? pos + 100 : data_len;
-        char context[200];
-        size_t context_len = end - start;
-        if (context_len >= sizeof(context))
-            context_len = sizeof(context) - 1;
-        strncpy(context, data + start, context_len);
-        context[context_len] = '\0';
-        LOG_DEBUG("  Contexto: '%.150s'", context);
+    LOG_FILE_DEBUG("Buscando boundary: %s", full_boundary);
+    LOG_FILE_DEBUG("Boundary de cierre: %s", closing_boundary);
 
-        search_ptr += strlen(full_boundary);
-    }
-
-    if (boundary_count == 0)
-    {
-        LOG_ERROR("No se encontró ningún boundary en los datos");
-        return -1;
-    }
-
-    LOG_DEBUG("Total boundaries encontrados: %d", boundary_count);
-    LOG_DEBUG("===================================");
-
-    LOG_DEBUG("Buscando boundary: %s", full_boundary);
-    LOG_DEBUG("Total received data: %zu", data_len);
-
-    // Buscar inicio del boundary
+    // Buscar el primer boundary
     const char *boundary_start = strstr(data, full_boundary);
     if (!boundary_start)
     {
-        LOG_ERROR("No se encontró boundary en los datos");
-        return -1;
+        LOG_FILE_ERROR("No se encontró boundary inicial");
+        return FILE_UPLOAD_ERROR_NO_BOUNDARY;
     }
 
-    // Avanzar después del boundary inicial
+    // Buscar el boundary de cierre
+    const char *closing_boundary_start = strstr(data, closing_boundary);
+    if (!closing_boundary_start)
+    {
+        // Si no hay boundary de cierre, buscar el siguiente boundary
+        const char *next_boundary = strstr(boundary_start + strlen(full_boundary), full_boundary);
+        if (next_boundary)
+        {
+            closing_boundary_start = next_boundary;
+            LOG_FILE_DEBUG("Usando siguiente boundary como cierre");
+        }
+        else
+        {
+            // Usar final de datos menos margen de seguridad
+            closing_boundary_start = data + data_len - 10;
+            LOG_FILE_DEBUG("Usando final de datos como boundary de cierre");
+        }
+    }
+
+    // Posición después del primer boundary + CRLF
     const char *headers_start = boundary_start + strlen(full_boundary);
+    if (*headers_start == '\r')
+        headers_start++;
+    if (*headers_start == '\n')
+        headers_start++;
 
-    // Saltar CRLF después del boundary
-    if (headers_start[0] == '\r' && headers_start[1] == '\n')
-    {
-        headers_start += 2;
-    }
-    else if (headers_start[0] == '\n')
-    {
-        headers_start += 1;
-    }
-
-    // Verificar que no nos salimos de los datos
-    if (headers_start >= data + data_len)
-    {
-        LOG_ERROR("Headers start fuera de los datos recibidos");
-        return -1;
-    }
-
-    // Buscar el final de los headers (línea vacía)
+    // Buscar fin de headers (doble CRLF)
     const char *headers_end = strstr(headers_start, "\r\n\r\n");
     if (!headers_end)
     {
         headers_end = strstr(headers_start, "\n\n");
         if (!headers_end)
         {
-            LOG_ERROR("No se encontró final de headers");
-            return -1;
+            LOG_FILE_ERROR("No se encontró fin de headers");
+            return FILE_UPLOAD_ERROR_PARSE_FAILED;
         }
-        headers_end += 2;
+        headers_end += 2; // Skip \n\n
     }
     else
     {
-        headers_end += 4;
+        headers_end += 4; // Skip \r\n\r\n
     }
 
-    // Verificar que headers_end está dentro de los datos
-    if (headers_end >= data + data_len)
-    {
-        LOG_ERROR("Headers end fuera de los datos recibidos");
-        return -1;
-    }
-
-    // Debug: posiciones importantes
-    LOG_DEBUG("Headers start position: %zu", headers_start - data);
-    LOG_DEBUG("Headers end position: %zu", headers_end - data);
-
-    // Extraer headers
+    // Extraer y procesar headers
     size_t headers_len = headers_end - headers_start;
-    char headers[2048];
-    if (headers_len >= sizeof(headers))
+    char *headers = malloc(headers_len + 1);
+    if (!headers)
     {
-        LOG_ERROR("Headers demasiado largos");
-        return -1;
+        LOG_FILE_ERROR("Error de memoria allocando headers");
+        return FILE_UPLOAD_ERROR_PARSE_FAILED;
     }
 
     strncpy(headers, headers_start, headers_len);
     headers[headers_len] = '\0';
 
-    LOG_DEBUG("Headers extraídos: %s", headers);
+    LOG_FILE_DEBUG("Headers extraídos (%zu bytes): %s", headers_len, headers);
 
-    // Buscar Content-Disposition para obtener filename
-    char *disposition_line = strstr(headers, "Content-Disposition:");
-    if (disposition_line)
+    // Parsear Content-Disposition para obtener filename
+    if (!extract_filename_from_disposition(headers,
+                                           upload_info->original_filename,
+                                           sizeof(upload_info->original_filename)))
     {
-        if (extract_filename_from_disposition(disposition_line, upload_info->original_filename,
-                                              sizeof(upload_info->original_filename)))
+        LOG_FILE_ERROR("No se pudo extraer filename");
+        free(headers);
+        return FILE_UPLOAD_ERROR_PARSE_FAILED;
+    }
+
+    // Extraer Content-Type
+    const char *content_type_line = strstr(headers, "Content-Type:");
+    if (content_type_line)
+    {
+        const char *type_start = content_type_line + strlen("Content-Type:");
+        while (*type_start == ' ' || *type_start == '\t')
+            type_start++;
+
+        const char *type_end = strchr(type_start, '\r');
+        if (!type_end)
+            type_end = strchr(type_start, '\n');
+        if (!type_end)
+            type_end = type_start + strlen(type_start);
+
+        size_t type_len = type_end - type_start;
+        if (type_len < sizeof(upload_info->content_type))
         {
-            LOG_INFO("Archivo detectado: %s", upload_info->original_filename);
+            strncpy(upload_info->content_type, type_start, type_len);
+            upload_info->content_type[type_len] = '\0';
         }
     }
 
-    // El contenido del archivo empieza después de los headers
-    const char *file_data_start = headers_end;
+    free(headers);
 
-    // Buscar el boundary final
-    char end_boundary[256];
-    const char *file_data_end = NULL;
+    // Calcular posición y tamaño de datos del archivo
+    upload_info->file_data = headers_end;
 
-    // Intentar diferentes formatos de boundary
-    const char *boundary_patterns[] = {
-        "\r\n--%s--", // CRLF + --boundary--
-        "\n--%s--",   // LF + --boundary--
-        "\r\n--%s",   // CRLF + --boundary (siguiente parte)
-        "\n--%s",     // LF + --boundary (siguiente parte)
-        NULL};
+    // Calcular fin de datos del archivo
+    const char *file_data_end = closing_boundary_start;
 
-    for (int i = 0; boundary_patterns[i] != NULL; i++)
+    // Retroceder para eliminar CRLF antes del boundary de cierre
+    while (file_data_end > upload_info->file_data &&
+           (*(file_data_end - 1) == '\r' || *(file_data_end - 1) == '\n'))
     {
-        snprintf(end_boundary, sizeof(end_boundary), boundary_patterns[i], boundary);
-        file_data_end = strstr(file_data_start, end_boundary);
-
-        if (file_data_end)
-        {
-            LOG_DEBUG("Boundary encontrado con patrón %d: %s", i, end_boundary);
-            break;
-        }
+        file_data_end--;
     }
 
-    if (!file_data_end)
-    {
-        // Si no encontramos boundary, usar el final de los datos
-        LOG_WARNING("No se encontró boundary final, usando final de datos");
-        file_data_end = data + data_len;
+    upload_info->file_size = file_data_end - upload_info->file_data;
+    upload_info->upload_time = time(NULL);
 
-        // Retroceder para quitar posibles \r\n finales
-        while (file_data_end > file_data_start &&
-               (*(file_data_end - 1) == '\r' || *(file_data_end - 1) == '\n'))
-        {
-            file_data_end--;
-        }
+    LOG_FILE_INFO("Archivo detectado: %s", upload_info->original_filename);
+    LOG_FILE_INFO("Content-Type: %s", upload_info->content_type);
+    LOG_FILE_INFO("Tamaño de archivo: %zu bytes", upload_info->file_size);
+    LOG_FILE_DEBUG("Datos del archivo desde posición %ld hasta %ld",
+                   upload_info->file_data - data, file_data_end - data);
+
+    // Validaciones básicas
+    if (upload_info->file_size == 0)
+    {
+        LOG_FILE_ERROR("Archivo vacío detectado");
+        return FILE_UPLOAD_ERROR_INVALID_IMAGE;
     }
 
-    // Debug: posiciones del archivo
-    LOG_DEBUG("File data start position: %zu", file_data_start - data);
-    LOG_DEBUG("File data end position: %zu", file_data_end - data);
-
-    // Calcular tamaño del archivo
-    upload_info->file_size = file_data_end - file_data_start;
-
-    LOG_INFO("Tamaño de archivo extraído: %zu bytes", upload_info->file_size);
-
-    // Verificar que el tamaño es válido
-    if (file_data_end < file_data_start)
+    if (upload_info->file_size > MAX_UPLOAD_SIZE)
     {
-        LOG_ERROR("Posiciones inválidas: end < start");
-        return -1;
+        LOG_FILE_ERROR("Archivo demasiado grande: %zu bytes (máximo: %d)",
+                       upload_info->file_size, MAX_UPLOAD_SIZE);
+        return FILE_UPLOAD_ERROR_TOO_LARGE;
     }
 
-    // Verificar tamaño máximo
-    size_t max_size = server_config.max_image_size_mb * 1024 * 1024;
-    if (upload_info->file_size > max_size)
-    {
-        LOG_ERROR("Archivo demasiado grande: %zu bytes (máximo: %zu MB)",
-                  upload_info->file_size, server_config.max_image_size_mb);
-        return -1;
-    }
-
-    // Guardar puntero a los datos del archivo
-    upload_info->file_data = file_data_start;
-
-    return 0;
+    return FILE_UPLOAD_SUCCESS;
 }
 
 // Guardar archivo en disco
-int save_uploaded_file(const file_upload_info_t *upload_info, char *saved_filepath, size_t filepath_size)
+int save_uploaded_file(const file_upload_info_t *upload_info,
+                       char *saved_filepath, size_t filepath_size)
 {
-    if (!upload_info || !upload_info->file_data || upload_info->file_size == 0)
+
+    if (!upload_info || !saved_filepath)
     {
-        LOG_ERROR("Información de archivo inválida");
-        return -1;
+        return FILE_UPLOAD_ERROR_INVALID_PARAMS;
     }
 
+    // Verificar formato soportado
     if (!is_supported_format(upload_info->original_filename))
     {
-        LOG_ERROR("Formato de archivo no soportado: %s", upload_info->original_filename);
-        return -1;
+        LOG_FILE_ERROR("Formato no soportado: %s", upload_info->original_filename);
+        return FILE_UPLOAD_ERROR_UNSUPPORTED_FORMAT;
     }
 
-    // Generar nombre de archivo temporal
-    char temp_filename[512];
+    // Validar datos de imagen antes de guardar
+    if (!validate_image_data((const unsigned char *)upload_info->file_data, upload_info->file_size))
+    {
+        LOG_FILE_ERROR("Datos de imagen inválidos para: %s", upload_info->original_filename);
+        return FILE_UPLOAD_ERROR_INVALID_IMAGE;
+    }
+
+    // Generar nombre temporal único
+    char temp_filename[MAX_FILENAME_SIZE];
     generate_temp_filename(temp_filename, sizeof(temp_filename), upload_info->original_filename);
 
-    // Guardar archivo temporal
-    FILE *file = fopen(temp_filename, "wb");
+    // Construir ruta completa
+    snprintf(saved_filepath, filepath_size, "%s/%s",
+             server_config.temp_path, temp_filename);
+
+    LOG_FILE_DEBUG("Guardando archivo en: %s", saved_filepath);
+
+    // Abrir archivo para escritura binaria
+    FILE *file = fopen(saved_filepath, "wb");
     if (!file)
     {
-        LOG_ERROR("No se pudo crear archivo temporal: %s (%s)", temp_filename, strerror(errno));
-        return -1;
+        LOG_FILE_ERROR("No se pudo crear archivo: %s - %s", saved_filepath, strerror(errno));
+        return FILE_UPLOAD_ERROR_SAVE_FAILED;
     }
 
-    size_t written = fwrite(upload_info->file_data, 1, upload_info->file_size, file);
+    // Escribir datos
+    size_t bytes_written = fwrite(upload_info->file_data, 1, upload_info->file_size, file);
     fclose(file);
 
-    if (written != upload_info->file_size)
+    if (bytes_written != upload_info->file_size)
     {
-        LOG_ERROR("Error escribiendo archivo: escrito %zu de %zu bytes", written, upload_info->file_size);
-        unlink(temp_filename);
-        return -1;
+        LOG_FILE_ERROR("Error escribiendo archivo: escritos %zu de %zu bytes",
+                       bytes_written, upload_info->file_size);
+        unlink(saved_filepath); // Eliminar archivo parcial
+        return FILE_UPLOAD_ERROR_SAVE_FAILED;
     }
 
-    // Verificar que es imagen válida
-    int width, height, channels;
-    unsigned char *img_data = stbi_load(temp_filename, &width, &height, &channels, 0);
-    if (!img_data)
-    {
-        LOG_ERROR("Archivo no es una imagen válida: %s", stbi_failure_reason());
-        unlink(temp_filename);
-        return -1;
-    }
-    stbi_image_free(img_data);
+    LOG_FILE_INFO("Archivo guardado exitosamente: %s (%zu bytes)",
+                  saved_filepath, upload_info->file_size);
 
-    // Procesar imagen completa
-    processed_image_info_t result;
-    memset(&result, 0, sizeof(result));
-
-    if (process_image_complete(temp_filename, upload_info->original_filename, &result) == 0)
-    {
-        LOG_INFO("Imagen procesada exitosamente: %s", upload_info->original_filename);
-        strncpy(saved_filepath, result.equalized_path, filepath_size - 1);
-        saved_filepath[filepath_size - 1] = '\0';
-    }
-    else
-    {
-        LOG_ERROR("Error procesando imagen: %s", upload_info->original_filename);
-        strncpy(saved_filepath, temp_filename, filepath_size - 1);
-        saved_filepath[filepath_size - 1] = '\0';
-    }
-
-    // Limpiar archivo temporal siempre
-    if (cleanup_temp_image(temp_filename) == 0)
-    {
-        LOG_WARNING("No se pudo eliminar archivo temporal: %s", temp_filename);
-    }
-
-    return 0;
+    return FILE_UPLOAD_SUCCESS;
 }
 
 // Procesar upload HTTP POST completo con cola de prioridad
@@ -572,6 +511,40 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
              upload_info.original_filename, upload_info.file_size, client_ip, get_queue_size());
 
     return 0;
+}
+
+int validate_image_data(const unsigned char *data, size_t size)
+{
+    int width, height, channels;
+
+    // Intentar cargar la imagen con stb_image
+    unsigned char *image_data = stbi_load_from_memory(data, (int)size, &width, &height, &channels, 0);
+
+    if (!image_data)
+    {
+        const char *error = stbi_failure_reason();
+        LOG_FILE_ERROR("STB no pudo cargar imagen: %s", error ? error : "Error desconocido");
+        return 0;
+    }
+
+    // Validar dimensiones razonables
+    if (width <= 0 || height <= 0 || width > 10000 || height > 10000)
+    {
+        LOG_FILE_ERROR("Dimensiones de imagen inválidas: %dx%d", width, height);
+        stbi_image_free(image_data);
+        return 0;
+    }
+
+    if (channels < 1 || channels > 4)
+    {
+        LOG_FILE_ERROR("Número de canales inválido: %d", channels);
+        stbi_image_free(image_data);
+        return 0;
+    }
+
+    LOG_FILE_DEBUG("Imagen validada: %dx%d, %d canales", width, height, channels);
+    stbi_image_free(image_data);
+    return 1;
 }
 
 // Limpiar archivos temporales antiguos
