@@ -3,13 +3,32 @@
 #include "config.h"
 #include "file_handler.h"
 #include "priority_queue.h"
+#include "image_processor.h"
 
 // Variable global del servidor
 tcp_server_t main_server;
 // Estadísticas globales de archivos
 static file_stats_t global_stats = {0};
 // Buffer para recibir datos grandes (para archivos)
-static char large_buffer[MAX_UPLOAD_SIZE];
+// static char large_buffer[MAX_UPLOAD_SIZE];
+
+// Función auxiliar para strcasestr en sistemas que no la tienen
+#ifndef strcasestr
+char *strcasestr(const char *haystack, const char *needle)
+{
+    size_t needle_len = strlen(needle);
+    size_t haystack_len = strlen(haystack);
+
+    for (size_t i = 0; i <= haystack_len - needle_len; i++)
+    {
+        if (strncasecmp(&haystack[i], needle, needle_len) == 0)
+        {
+            return (char *)&haystack[i];
+        }
+    }
+    return NULL;
+}
+#endif
 
 // Inicializar estadísticas de archivos
 void init_file_stats(void)
@@ -454,6 +473,7 @@ int send_processing_success_response(int client_socket, const processed_image_in
     case COLOR_BLUE:
         color_name = "blue";
         break;
+    case COLOR_UNDEFINED:
     default:
         color_name = "unknown";
         break;
@@ -463,18 +483,21 @@ int send_processing_success_response(int client_socket, const processed_image_in
     time_t current_time = time(NULL);
     int processing_time = (int)difftime(current_time, result->processing_time);
 
+    // Calcular tamaño aproximado de la imagen
+    long image_size = (long)result->width * result->height * result->channels;
+
     snprintf(response_json, sizeof(response_json),
              "{\n"
              "  \"status\": \"success\",\n"
              "  \"message\": \"File processed successfully\",\n"
              "  \"filename\": \"%s\",\n"
-             "  \"size\": %d,\n"
+             "  \"size\": %ld,\n"
              "  \"processed_path\": \"%s\",\n"
              "  \"predominant_color\": \"%s\",\n"
              "  \"processing_time\": %d\n"
              "}",
              result->original_filename,
-             (int)(result->width * result->height * result->channels), // Aproximación del tamaño
+             image_size,
              result->equalized_path,
              color_name,
              processing_time);
