@@ -1,8 +1,10 @@
 #include "priority_queue.h"
 #include "logger.h"
 #include "image_processor.h"
+#include "server.h"
 
 // Variables globales
+extern file_stats_t *get_file_stats(void);
 priority_queue_t processing_queue;
 pthread_t processor_thread;
 int processor_running = 0;
@@ -316,10 +318,9 @@ void *file_processor_thread(void *arg)
             LOG_INFO("Cola restante: %d archivos", get_queue_size());
 
             // Actualizar estadísticas
-            pthread_mutex_lock(&processing_queue.queue_mutex);
-            global_stats.total_uploads++;
-            global_stats.total_bytes_processed += item.file_size;
-            pthread_mutex_unlock(&processing_queue.queue_mutex);
+            file_stats_t *stats = get_file_stats();
+            stats->total_uploads++;
+            stats->total_bytes_processed += item.file_size;
 
             // Procesar imagen completa
             processed_image_info_t result;
@@ -330,9 +331,8 @@ void *file_processor_thread(void *arg)
                 LOG_INFO("✓ Imagen procesada exitosamente: %s", item.upload_info.original_filename);
 
                 // Actualizar estadísticas de éxito
-                pthread_mutex_lock(&processing_queue.queue_mutex);
-                global_stats.successful_uploads++;
-                pthread_mutex_unlock(&processing_queue.queue_mutex);
+                file_stats_t *stats = get_file_stats();
+                stats->successful_uploads++;
 
                 // Enviar respuesta de éxito al cliente
                 char response_body[512];
@@ -362,9 +362,8 @@ void *file_processor_thread(void *arg)
                 LOG_ERROR("✗ Error procesando imagen: %s", item.upload_info.original_filename);
 
                 // Actualizar estadísticas de fallo
-                pthread_mutex_lock(&processing_queue.queue_mutex);
-                global_stats.failed_uploads++;
-                pthread_mutex_unlock(&processing_queue.queue_mutex);
+                file_stats_t *stats = get_file_stats();
+                stats->failed_uploads++;
 
                 send_error_response(item.client_socket, 500, "Failed to process image");
                 log_client_activity(item.client_ip, item.upload_info.original_filename, "process", "failed");

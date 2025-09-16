@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <time.h>
 #include "file_handler.h"
+#include "server.h"
 
 #define MAX_QUEUE_SIZE 100
 

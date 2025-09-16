@@ -131,6 +131,12 @@ static inline int is_server_running(void)
 }
 
 // ================================
+// FUNCIONES DE LOGGING Y ESTADÍSTICAS
+// ================================
+void mark_client_inactive(int client_socket);
+void show_detailed_server_stats(void);
+
+// ================================
 // FUNCIONES DE RESPUESTA HTTP RÁPIDA
 // ================================
 
