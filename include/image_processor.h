@@ -21,21 +21,18 @@ typedef enum
 } color_category_t;
 
 // Estructura para información de imagen procesada
-typedef struct
+typedef struct processed_image_info
 {
-    char original_path[MAX_FILEPATH];     // Ruta del archivo original
-    char original_filename[MAX_FILENAME]; // Solo el nombre del archivo original
-    char equalized_path[MAX_FILEPATH];    // Ruta del archivo ecualizado
-    char classified_path[MAX_FILEPATH];   // Ruta del archivo clasificado por color
-
-    int width;    // Ancho de la imagen
-    int height;   // Alto de la imagen
-    int channels; // Número de canales
-
-    color_category_t predominant_color; // Color predominante detectado
-    int processing_successful;          // 1 si el procesamiento fue exitoso
-
-    time_t processing_time; // Timestamp del procesamiento
+    char original_path[MAX_FILEPATH];
+    char original_filename[MAX_FILENAME];
+    char equalized_path[MAX_FILEPATH];
+    char classified_path[MAX_FILEPATH];
+    int width;
+    int height;
+    int channels;
+    color_category_t predominant_color;
+    int processing_successful;
+    time_t processing_time;
 } processed_image_info_t;
 
 // Funciones de histograma

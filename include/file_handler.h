@@ -24,7 +24,8 @@
 #define SUPPORTED_FORMATS "jpg,jpeg,png,gif"
 
 // Códigos de error específicos para file handling
-typedef enum {
+typedef enum
+{
     FILE_UPLOAD_SUCCESS = 0,
     FILE_UPLOAD_ERROR_INVALID_PARAMS = -1,
     FILE_UPLOAD_ERROR_UNSUPPORTED_FORMAT = -2,
@@ -37,12 +38,13 @@ typedef enum {
 } file_upload_error_t;
 
 // Estructura para información de archivo subido
-typedef struct {
-    char original_filename[MAX_FILENAME_SIZE];   // Nombre original del archivo
-    const char* file_data;                       // Puntero a los datos del archivo
-    size_t file_size;                           // Tamaño del archivo en bytes
-    char content_type[64];                      // Content-Type del archivo
-    time_t upload_time;                         // Timestamp del upload
+typedef struct
+{
+    char original_filename[MAX_FILENAME_SIZE]; // Nombre original del archivo
+    const char *file_data;                     // Puntero a los datos del archivo
+    size_t file_size;                          // Tamaño del archivo en bytes
+    char content_type[64];                     // Content-Type del archivo
+    time_t upload_time;                        // Timestamp del upload
 } file_upload_info_t;
 
 // =============================================================================
@@ -57,8 +59,8 @@ typedef struct {
  * @param client_ip IP del cliente (para logging)
  * @return 0 en éxito, código de error negativo en fallo
  */
-int handle_file_upload_request(int client_socket, const char* request_data, 
-                              size_t request_len, const char* client_ip);
+int handle_file_upload_request(int client_socket, const char *request_data,
+                               size_t request_len, const char *client_ip);
 
 /**
  * Parsear datos multipart/form-data y extraer información del archivo
@@ -68,8 +70,8 @@ int handle_file_upload_request(int client_socket, const char* request_data,
  * @param upload_info Estructura donde guardar la información extraída
  * @return 0 en éxito, -1 en error
  */
-int parse_multipart_data(const char* data, size_t data_len, const char* boundary, 
-                        file_upload_info_t* upload_info);
+int parse_multipart_data(const char *data, size_t data_len, const char *boundary,
+                         file_upload_info_t *upload_info);
 
 /**
  * Guardar archivo subido en disco con validación
@@ -78,8 +80,8 @@ int parse_multipart_data(const char* data, size_t data_len, const char* boundary
  * @param filepath_size Tamaño del buffer filepath
  * @return 0 en éxito, -1 en error
  */
-int save_uploaded_file(const file_upload_info_t* upload_info, 
-                       char* saved_filepath, size_t filepath_size);
+int save_uploaded_file(const file_upload_info_t *upload_info,
+                       char *saved_filepath, size_t filepath_size);
 
 // =============================================================================
 // FUNCIONES DE VALIDACIÓN Y UTILIDADES
@@ -90,7 +92,7 @@ int save_uploaded_file(const file_upload_info_t* upload_info,
  * @param filename Nombre del archivo con extensión
  * @return 1 si es soportado, 0 si no
  */
-int is_supported_format(const char* filename);
+int is_supported_format(const char *filename);
 
 /**
  * Generar nombre único para archivo temporal
@@ -98,15 +100,15 @@ int is_supported_format(const char* filename);
  * @param size Tamaño del buffer
  * @param original_filename Nombre original del archivo
  */
-void generate_temp_filename(char* temp_filename, size_t size, 
-                           const char* original_filename);
+void generate_temp_filename(char *temp_filename, size_t size,
+                            const char *original_filename);
 
 /**
  * Obtener tamaño de un archivo abierto
  * @param file Puntero al archivo
  * @return Tamaño en bytes
  */
-long get_file_size(FILE* file);
+long get_file_size(FILE *file);
 
 // =============================================================================
 // FUNCIONES DE PARSING HTTP
@@ -119,7 +121,7 @@ long get_file_size(FILE* file);
  * @param boundary_size Tamaño del buffer boundary
  * @return 1 en éxito, 0 en error
  */
-int extract_boundary(const char* content_type, char* boundary, size_t boundary_size);
+int extract_boundary(const char *content_type, char *boundary, size_t boundary_size);
 
 /**
  * Extraer filename del header Content-Disposition
@@ -128,8 +130,8 @@ int extract_boundary(const char* content_type, char* boundary, size_t boundary_s
  * @param filename_size Tamaño del buffer filename
  * @return 1 en éxito, 0 en error
  */
-int extract_filename_from_disposition(const char* disposition, 
-                                     char* filename, size_t filename_size);
+int extract_filename_from_disposition(const char *disposition,
+                                      char *filename, size_t filename_size);
 
 // =============================================================================
 // FUNCIONES DE ESTADÍSTICAS (OPCIONALES)
@@ -146,7 +148,7 @@ void init_file_stats(void);
  * @param bytes_processed Bytes procesados
  * @param filename Nombre del archivo procesado
  */
-void update_file_stats(int success, size_t bytes_processed, const char* filename);
+void update_file_stats(int success, size_t bytes_processed, const char *filename);
 
 /**
  * Mostrar estadísticas en logs
@@ -169,7 +171,7 @@ int cleanup_old_temp_files(int max_age_hours);
  * @param path Ruta a verificar
  * @return Espacio libre en bytes, -1 en error
  */
-long long get_available_disk_space(const char* path);
+long long get_available_disk_space(const char *path);
 
 // =============================================================================
 // MACROS DE UTILIDAD
@@ -191,5 +193,7 @@ long long get_available_disk_space(const char* path);
 #define LOG_FILE_ERROR(fmt, ...) LOG_ERROR("[FILE_HANDLER] " fmt, ##__VA_ARGS__)
 #define LOG_FILE_INFO(fmt, ...) LOG_INFO("[FILE_HANDLER] " fmt, ##__VA_ARGS__)
 #define LOG_FILE_DEBUG(fmt, ...) LOG_DEBUG("[FILE_HANDLER] " fmt, ##__VA_ARGS__)
+
+int validate_image_data(const unsigned char *data, size_t size);
 
 #endif // FILE_HANDLER_H

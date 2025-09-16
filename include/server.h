@@ -152,7 +152,6 @@ static inline int send_error_response(int socket, int status_code, const char *m
     return send_http_response(socket, status_code, "application/json", error_json, strlen(error_json));
 }
 
-typedef struct processed_image_info processed_image_info_t;
 int send_processing_success_response(int client_socket, const processed_image_info_t *result);
 
 #endif // SERVER_H
