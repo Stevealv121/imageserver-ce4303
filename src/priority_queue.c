@@ -154,7 +154,8 @@ int enqueue_file_for_processing(const file_upload_info_t *upload_info,
     // Esperar si la cola está llena
     while (processing_queue.size >= MAX_QUEUE_SIZE && processing_queue.active)
     {
-        LOG_WARNING("Cola llena, esperando espacio...");
+        LOG_WARNING("Cola llena (%d/%d), esperando espacio...",
+                    processing_queue.size, MAX_QUEUE_SIZE);
         pthread_cond_wait(&processing_queue.queue_not_full, &processing_queue.queue_mutex);
     }
 
@@ -185,11 +186,20 @@ int enqueue_file_for_processing(const file_upload_info_t *upload_info,
     processing_queue.size++;
     heapify_up(processing_queue.size - 1);
 
-    LOG_DEBUG("Archivo encolado exitosamente, estado de cola:");
-    debug_print_queue();
+    LOG_INFO("   ARCHIVO ENCOLADO:");
+    LOG_INFO("   Archivo: %s (%zu bytes)", upload_info->original_filename, upload_info->file_size);
+    LOG_INFO("   Cliente: %s", client_ip);
+    LOG_INFO("   Posición en cola: %d/%d", processing_queue.size, MAX_QUEUE_SIZE);
 
-    LOG_INFO("Archivo encolado: %s (%zu bytes) desde %s - Posición en cola: %d",
-             upload_info->original_filename, upload_info->file_size, client_ip, processing_queue.size);
+    // Mostrar orden actual de la cola (primeros 3)
+    LOG_INFO("   Orden de procesamiento (próximos 3):");
+    int show_count = (processing_queue.size < 3) ? processing_queue.size : 3;
+    for (int i = 0; i < show_count; i++)
+    {
+        LOG_INFO("     %d. %s (%zu bytes)", i + 1,
+                 processing_queue.items[i].upload_info.original_filename,
+                 processing_queue.items[i].file_size);
+    }
 
     // Notificar que hay un nuevo elemento
     pthread_cond_signal(&processing_queue.queue_not_empty);
@@ -297,32 +307,19 @@ void *file_processor_thread(void *arg)
     {
         priority_queue_item_t item;
 
-        // Esperar un poco para permitir que se acumule la cola
-        // antes de procesar, especialmente al inicio
-        pthread_mutex_lock(&processing_queue.queue_mutex);
-
-        // Si la cola tiene pocos elementos, esperar un poco más para que lleguen más archivos
-        if (processing_queue.size == 1)
-        {
-            LOG_DEBUG("Solo 1 archivo en cola, esperando 2 segundos por más archivos...");
-            struct timespec wait_time;
-            clock_gettime(CLOCK_REALTIME, &wait_time);
-            wait_time.tv_sec += 2; // Esperar 2 segundos
-
-            pthread_cond_timedwait(&processing_queue.queue_not_empty,
-                                   &processing_queue.queue_mutex, &wait_time);
-        }
-
-        pthread_mutex_unlock(&processing_queue.queue_mutex);
-
-        // Extraer archivo de la cola
+        // Extraer archivo de la cola (BLOQUEA hasta que haya elementos)
         if (dequeue_file_for_processing(&item) == 0)
         {
-            LOG_INFO("Procesando archivo: %s (%zu bytes) desde %s",
+            LOG_INFO("=== PROCESANDO ARCHIVO ===");
+            LOG_INFO("Archivo: %s (%zu bytes) desde %s",
                      item.upload_info.original_filename, item.file_size, item.client_ip);
+            LOG_INFO("Cola restante: %d archivos", get_queue_size());
 
-            // Mostrar estado de la cola ANTES del procesamiento
-            LOG_INFO("Cola antes del procesamiento: %d archivos restantes", get_queue_size());
+            // Actualizar estadísticas
+            pthread_mutex_lock(&processing_queue.queue_mutex);
+            global_stats.total_uploads++;
+            global_stats.total_bytes_processed += item.file_size;
+            pthread_mutex_unlock(&processing_queue.queue_mutex);
 
             // Procesar imagen completa
             processed_image_info_t result;
@@ -330,7 +327,12 @@ void *file_processor_thread(void *arg)
 
             if (process_image_complete(item.temp_filepath, item.upload_info.original_filename, &result) == 0)
             {
-                LOG_INFO("Imagen procesada exitosamente: %s", item.upload_info.original_filename);
+                LOG_INFO("✓ Imagen procesada exitosamente: %s", item.upload_info.original_filename);
+
+                // Actualizar estadísticas de éxito
+                pthread_mutex_lock(&processing_queue.queue_mutex);
+                global_stats.successful_uploads++;
+                pthread_mutex_unlock(&processing_queue.queue_mutex);
 
                 // Enviar respuesta de éxito al cliente
                 char response_body[512];
@@ -341,19 +343,29 @@ void *file_processor_thread(void *arg)
                          "  \"filename\": \"%s\",\n"
                          "  \"size\": %zu,\n"
                          "  \"processed_path\": \"%s\",\n"
-                         "  \"predominant_color\": \"%s\"\n"
+                         "  \"predominant_color\": \"%s\",\n"
+                         "  \"processing_time\": %ld\n"
                          "}",
-                         item.upload_info.original_filename, item.file_size, result.equalized_path,
+                         item.upload_info.original_filename,
+                         item.file_size,
+                         result.equalized_path,
                          (result.predominant_color == COLOR_RED) ? "red" : (result.predominant_color == COLOR_GREEN) ? "green"
                                                                        : (result.predominant_color == COLOR_BLUE)    ? "blue"
-                                                                                                                     : "undefined");
+                                                                                                                     : "undefined",
+                         time(NULL) - item.received_time);
 
                 send_success_response(item.client_socket, "application/json", response_body);
                 log_client_activity(item.client_ip, item.upload_info.original_filename, "process", "success");
             }
             else
             {
-                LOG_ERROR("Error procesando imagen: %s", item.upload_info.original_filename);
+                LOG_ERROR("✗ Error procesando imagen: %s", item.upload_info.original_filename);
+
+                // Actualizar estadísticas de fallo
+                pthread_mutex_lock(&processing_queue.queue_mutex);
+                global_stats.failed_uploads++;
+                pthread_mutex_unlock(&processing_queue.queue_mutex);
+
                 send_error_response(item.client_socket, 500, "Failed to process image");
                 log_client_activity(item.client_ip, item.upload_info.original_filename, "process", "failed");
             }
@@ -361,8 +373,20 @@ void *file_processor_thread(void *arg)
             // Limpiar archivo temporal
             cleanup_temp_image(item.temp_filepath);
 
-            // Cerrar socket del cliente
+            // IMPORTANTE: Cerrar socket del cliente al final
             close(item.client_socket);
+
+            LOG_INFO("=== PROCESAMIENTO COMPLETADO ===");
+            LOG_INFO("Cliente desconectado: %s", item.client_ip);
+        }
+        else
+        {
+            // Si dequeue falla, puede ser porque se está cerrando el procesador
+            if (processor_running)
+            {
+                LOG_DEBUG("dequeue_file_for_processing falló, reintentando...");
+                usleep(100000); // 100ms
+            }
         }
     }
 

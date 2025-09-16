@@ -378,12 +378,33 @@ int receive_complete_request(int client_socket, char *buffer, size_t buffer_size
     return 0;
 }
 
-// Hilo manejador de cliente mejorado
+void mark_client_inactive(int client_socket)
+{
+    pthread_mutex_lock(&main_server.clients_mutex);
+
+    for (int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if (main_server.clients[i].active &&
+            main_server.clients[i].socket_fd == client_socket)
+        {
+
+            main_server.clients[i].active = 0;
+            main_server.client_count--;
+
+            LOG_INFO("Cliente marcado como inactivo: %s (Total: %d)",
+                     main_server.clients[i].ip_str, main_server.client_count);
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&main_server.clients_mutex);
+}
+
+// Hilo manejador de cliente
 void *client_handler_thread(void *arg)
 {
     client_info_t *client = (client_info_t *)arg;
     size_t total_received;
-    int upload_queued = 0; // Flag para saber si el archivo fue encolado
 
     LOG_INFO("Iniciando manejo de cliente: %s", client->ip_str);
 
@@ -412,13 +433,24 @@ void *client_handler_thread(void *arg)
 
                     if (upload_result == 0)
                     {
-                        upload_queued = 1; // Archivo encolado exitosamente
-                        // NO CERRAR SOCKET - el processor_thread se encargará
+                        LOG_INFO("Archivo encolado exitosamente desde %s - socket transferido al procesador",
+                                 client->ip_str);
+
+                        // IMPORTANTE: No cerrar socket aquí, será manejado por el processor
+                        // Marcar cliente como inactivo inmediatamente
+                        pthread_mutex_lock(&main_server.clients_mutex);
+                        client->active = 0;
+                        main_server.client_count--;
+                        LOG_INFO("Cliente %s transferido al procesador (Total: %d)",
+                                 client->ip_str, main_server.client_count);
+                        pthread_mutex_unlock(&main_server.clients_mutex);
+
+                        return NULL; // Terminar hilo - el processor se encarga del socket
                     }
                     else
                     {
+                        LOG_ERROR("Error procesando upload desde %s", client->ip_str);
                         // Error en el upload, cerrar normalmente
-                        upload_queued = 0;
                     }
                 }
                 else
@@ -451,18 +483,14 @@ void *client_handler_thread(void *arg)
         send_error_response(client->socket_fd, 500, "Internal Server Error");
     }
 
-    // SOLO cerrar conexión si NO fue un upload encolado exitosamente
-    if (!upload_queued)
-    {
-        close(client->socket_fd);
-        client->active = 0;
+    // Cerrar conexión y marcar cliente como inactivo (solo para casos no-upload)
+    close(client->socket_fd);
 
-        pthread_mutex_lock(&main_server.clients_mutex);
-        main_server.client_count--;
-        LOG_INFO("Cliente desconectado: %s (Total: %d)", client->ip_str, main_server.client_count);
-        pthread_mutex_unlock(&main_server.clients_mutex);
-    }
-    // Si upload_queued == 1, el processor_thread cerrará el socket y actualizará client->active
+    pthread_mutex_lock(&main_server.clients_mutex);
+    client->active = 0;
+    main_server.client_count--;
+    LOG_INFO("Cliente desconectado: %s (Total: %d)", client->ip_str, main_server.client_count);
+    pthread_mutex_unlock(&main_server.clients_mutex);
 
     return NULL;
 }
