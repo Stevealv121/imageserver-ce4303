@@ -366,6 +366,57 @@ void print_queue_status(void)
     pthread_mutex_unlock(&processing_queue.queue_mutex);
 }
 
+// Función para enviar respuestas de éxito con información de procesamiento
+static int send_processing_success_response(int client_socket, const processed_image_info_t *result)
+{
+    char response_json[1024];
+    const char *color_name = "unknown";
+
+    // Convertir enum de color a string
+    switch (result->predominant_color)
+    {
+    case COLOR_RED:
+        color_name = "red";
+        break;
+    case COLOR_GREEN:
+        color_name = "green";
+        break;
+    case COLOR_BLUE:
+        color_name = "blue";
+        break;
+    case COLOR_UNDEFINED:
+    default:
+        color_name = "unknown";
+        break;
+    }
+
+    // Calcular tiempo de procesamiento
+    time_t current_time = time(NULL);
+    int processing_time = (int)difftime(current_time, result->processing_time);
+
+    // Calcular tamaño aproximado de la imagen
+    long image_size = (long)result->width * result->height * result->channels;
+
+    snprintf(response_json, sizeof(response_json),
+             "{\n"
+             "  \"status\": \"success\",\n"
+             "  \"message\": \"File processed successfully\",\n"
+             "  \"filename\": \"%s\",\n"
+             "  \"size\": %ld,\n"
+             "  \"processed_path\": \"%s\",\n"
+             "  \"predominant_color\": \"%s\",\n"
+             "  \"processing_time\": %d\n"
+             "}",
+             result->original_filename,
+             image_size,
+             result->equalized_path,
+             color_name,
+             processing_time);
+
+    return send_http_response(client_socket, 200, "application/json",
+                              response_json, strlen(response_json));
+}
+
 // Hilo procesador de archivos
 void *file_processor_thread(void *arg)
 {

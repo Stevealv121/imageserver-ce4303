@@ -1,9 +1,9 @@
-#include "server.h"
+#include "image_processor.h"
 #include "logger.h"
 #include "config.h"
+#include "server.h"
 #include "file_handler.h"
 #include "priority_queue.h"
-#include "image_processor.h"
 
 // Variable global del servidor
 tcp_server_t main_server;
@@ -453,57 +453,6 @@ void mark_client_inactive(int client_socket)
     }
 
     pthread_mutex_unlock(&main_server.clients_mutex);
-}
-
-// Función para enviar respuestas de éxito con información de procesamiento
-int send_processing_success_response(int client_socket, const processed_image_info_t *result)
-{
-    char response_json[1024];
-    const char *color_name = "unknown";
-
-    // Convertir enum de color a string
-    switch (result->predominant_color)
-    {
-    case COLOR_RED:
-        color_name = "red";
-        break;
-    case COLOR_GREEN:
-        color_name = "green";
-        break;
-    case COLOR_BLUE:
-        color_name = "blue";
-        break;
-    case COLOR_UNDEFINED:
-    default:
-        color_name = "unknown";
-        break;
-    }
-
-    // Calcular tiempo de procesamiento
-    time_t current_time = time(NULL);
-    int processing_time = (int)difftime(current_time, result->processing_time);
-
-    // Calcular tamaño aproximado de la imagen
-    long image_size = (long)result->width * result->height * result->channels;
-
-    snprintf(response_json, sizeof(response_json),
-             "{\n"
-             "  \"status\": \"success\",\n"
-             "  \"message\": \"File processed successfully\",\n"
-             "  \"filename\": \"%s\",\n"
-             "  \"size\": %ld,\n"
-             "  \"processed_path\": \"%s\",\n"
-             "  \"predominant_color\": \"%s\",\n"
-             "  \"processing_time\": %d\n"
-             "}",
-             result->original_filename,
-             image_size,
-             result->equalized_path,
-             color_name,
-             processing_time);
-
-    return send_http_response(client_socket, 200, "application/json",
-                              response_json, strlen(response_json));
 }
 
 // Hilo manejador de cliente
