@@ -294,13 +294,32 @@ void *file_processor_thread(void *arg)
     {
         priority_queue_item_t item;
 
+        // Esperar un poco para permitir que se acumule la cola
+        // antes de procesar, especialmente al inicio
+        pthread_mutex_lock(&processing_queue.queue_mutex);
+
+        // Si la cola tiene pocos elementos, esperar un poco más para que lleguen más archivos
+        if (processing_queue.size == 1)
+        {
+            LOG_DEBUG("Solo 1 archivo en cola, esperando 2 segundos por más archivos...");
+            struct timespec wait_time;
+            clock_gettime(CLOCK_REALTIME, &wait_time);
+            wait_time.tv_sec += 2; // Esperar 2 segundos
+
+            pthread_cond_timedwait(&processing_queue.queue_not_empty,
+                                   &processing_queue.queue_mutex, &wait_time);
+        }
+
+        pthread_mutex_unlock(&processing_queue.queue_mutex);
+
         // Extraer archivo de la cola
         if (dequeue_file_for_processing(&item) == 0)
         {
             LOG_INFO("Procesando archivo: %s (%zu bytes) desde %s",
                      item.upload_info.original_filename, item.file_size, item.client_ip);
 
-            sleep(3); // Simular procesamiento lento de 3 segundos
+            // Mostrar estado de la cola ANTES del procesamiento
+            LOG_INFO("Cola antes del procesamiento: %d archivos restantes", get_queue_size());
 
             // Procesar imagen completa
             processed_image_info_t result;

@@ -531,11 +531,6 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
              "}",
              upload_info.original_filename, upload_info.file_size, get_queue_size());
 
-    send_success_response(client_socket, "application/json", response_body);
-
-    // Log de actividad del cliente
-    log_client_activity(client_ip, upload_info.original_filename, "upload", "queued");
-
     LOG_INFO("Upload encolado: %s (%zu bytes) desde %s - Posición en cola: %d",
              upload_info.original_filename, upload_info.file_size, client_ip, get_queue_size());
 
