@@ -185,6 +185,9 @@ int enqueue_file_for_processing(const file_upload_info_t *upload_info,
     processing_queue.size++;
     heapify_up(processing_queue.size - 1);
 
+    LOG_DEBUG("Archivo encolado exitosamente, estado de cola:");
+    debug_print_queue();
+
     LOG_INFO("Archivo encolado: %s (%zu bytes) desde %s - Posición en cola: %d",
              upload_info->original_filename, upload_info->file_size, client_ip, processing_queue.size);
 
@@ -412,4 +415,21 @@ void stop_file_processor(void)
     pthread_join(processor_thread, NULL);
 
     LOG_INFO("Procesador de archivos detenido");
+}
+
+// Función para debugging: imprimir estado completo de la cola
+void debug_print_queue(void)
+{
+    pthread_mutex_lock(&processing_queue.queue_mutex);
+    LOG_DEBUG("=== Estado actual de la cola ===");
+    LOG_DEBUG("Tamaño: %d elementos", processing_queue.size);
+    for (int i = 0; i < processing_queue.size; i++)
+    {
+        LOG_DEBUG("  [%d] %s - %zu bytes (recibido: %ld)", i,
+                  processing_queue.items[i].upload_info.original_filename,
+                  processing_queue.items[i].file_size,
+                  processing_queue.items[i].received_time);
+    }
+    LOG_DEBUG("===============================");
+    pthread_mutex_unlock(&processing_queue.queue_mutex);
 }

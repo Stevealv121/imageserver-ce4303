@@ -518,18 +518,7 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
         return -1;
     }
 
-    // Enviar respuesta inmediata de que el archivo fue recibido y encolado
-    char response_body[512];
-    snprintf(response_body, sizeof(response_body),
-             "{\n"
-             "  \"status\": \"queued\",\n"
-             "  \"message\": \"File queued for processing\",\n"
-             "  \"filename\": \"%s\",\n"
-             "  \"size\": %zu,\n"
-             "  \"queue_position\": %d,\n"
-             "  \"note\": \"Processing files by size - smaller files processed first\"\n"
-             "}",
-             upload_info.original_filename, upload_info.file_size, get_queue_size());
+    log_client_activity(client_ip, upload_info.original_filename, "upload", "queued");
 
     LOG_INFO("Upload encolado: %s (%zu bytes) desde %s - Posición en cola: %d",
              upload_info.original_filename, upload_info.file_size, client_ip, get_queue_size());

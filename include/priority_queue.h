@@ -54,11 +54,8 @@ int is_queue_full(void);
 int get_queue_size(void);
 void print_queue_status(void);
 
-// Funciones internas del heap
-static void heapify_up(int index);
-static void heapify_down(int index);
-static void swap_items(int i, int j);
-static int compare_priority(const priority_queue_item_t *a, const priority_queue_item_t *b);
+// Función para debugging
+void debug_print_queue(void);
 
 // Hilo procesador de archivos
 void *file_processor_thread(void *arg);
