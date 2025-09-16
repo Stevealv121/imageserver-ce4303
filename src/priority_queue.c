@@ -300,6 +300,8 @@ void *file_processor_thread(void *arg)
             LOG_INFO("Procesando archivo: %s (%zu bytes) desde %s",
                      item.upload_info.original_filename, item.file_size, item.client_ip);
 
+            sleep(3); // Simular procesamiento lento de 3 segundos
+
             // Procesar imagen completa
             processed_image_info_t result;
             memset(&result, 0, sizeof(result));
