@@ -598,24 +598,6 @@ void debug_print_queue(void)
     pthread_mutex_unlock(&processing_queue.queue_mutex);
 }
 
-// Función para obtener estadísticas de la cola
-void get_queue_statistics(int *total_files, int *total_bytes, int *avg_file_size)
-{
-    pthread_mutex_lock(&processing_queue.queue_mutex);
-
-    *total_files = processing_queue.size;
-    *total_bytes = 0;
-
-    for (int i = 0; i < processing_queue.size; i++)
-    {
-        *total_bytes += processing_queue.items[i].file_size;
-    }
-
-    *avg_file_size = (*total_files > 0) ? (*total_bytes / *total_files) : 0;
-
-    pthread_mutex_unlock(&processing_queue.queue_mutex);
-}
-
 // Función para mostrar estado detallado de la cola
 void print_detailed_queue_status(void)
 {
