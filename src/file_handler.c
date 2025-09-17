@@ -414,7 +414,7 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
         *newline = '\0';
 
     // Verificar que es multipart/form-data
-    if (strncmp(content_type, "multipart/form-data", strlen("multipart/form-data")) != 0)
+    if (!strstr(value_start, "multipart/form-data"))
     {
         LOG_ERROR("Content-Type no es multipart/form-data, recibí: %s", value_start);
         send_error_response(client_socket, 400, "Expected multipart/form-data");

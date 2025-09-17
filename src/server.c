@@ -513,7 +513,7 @@ void *client_handler_thread(void *arg)
         {
             LOG_INFO("Detectado upload de archivo desde %s", client_ip);
 
-            if (handle_post_request(client->socket_fd, request_buffer, total_received, client_ip) != 0)
+            if (handle_file_upload_request(client->socket_fd, request_buffer, total_received, client_ip) != 0)
             {
                 LOG_ERROR("Error procesando POST de %s", client_ip);
             }
@@ -631,24 +631,6 @@ int handle_get_request(int client_socket, const char *path, const char *client_i
         log_client_activity(client_ip, path, "GET", "not_found");
         return -1;
     }
-}
-
-// Manejar petición POST no-multipart
-int handle_post_request(int client_socket, const char *request_data, size_t request_len, const char *client_ip)
-{
-    (void)request_data;
-    (void)request_len; // Evitar warnings
-
-    const char *response =
-        "{\n"
-        "  \"error\": \"POST request must be multipart/form-data for file uploads\",\n"
-        "  \"usage\": \"Send files using multipart/form-data with field name 'image'\"\n"
-        "}";
-
-    send_http_response(client_socket, 400, "application/json", response, strlen(response));
-    log_client_activity(client_ip, "POST", "non-multipart", "bad_request");
-
-    return -1;
 }
 
 // Enviar respuesta HTTP (función original mantenida para compatibilidad)
