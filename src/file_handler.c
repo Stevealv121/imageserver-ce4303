@@ -392,15 +392,31 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
 
     LOG_DEBUG("Content-Type: %s", content_type);
 
-    // Mover puntero al valor después de "Content-Type:"
-    const char *value_start = content_type + strlen("Content-Type:");
-    while (*value_start == ' ')
-        value_start++;
+    // Encontrar inicio del valor de Content-Type
+    char *value_start = strstr(content_type, ":");
+    if (value_start)
+    {
+        value_start++; // saltar ':'
+        while (*value_start == ' ')
+            value_start++; // quitar espacios
+    }
+    else
+    {
+        value_start = content_type; // fallback
+    }
+
+    // Quitar salto de línea al final si lo hubiera
+    char *newline = strchr(value_start, '\r');
+    if (newline)
+        *newline = '\0';
+    newline = strchr(value_start, '\n');
+    if (newline)
+        *newline = '\0';
 
     // Verificar que es multipart/form-data
-    if (!strstr(content_type, "multipart/form-data"))
+    if (!strstr(value_start, "multipart/form-data"))
     {
-        LOG_ERROR("Content-Type no es multipart/form-data");
+        LOG_ERROR("Content-Type no es multipart/form-data, recibí: %s", value_start);
         send_error_response(client_socket, 400, "Expected multipart/form-data");
         return -1;
     }
