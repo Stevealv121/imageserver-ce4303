@@ -513,9 +513,17 @@ void *client_handler_thread(void *arg)
         {
             LOG_INFO("Detectado upload de archivo desde %s", client_ip);
 
-            if (handle_file_upload_request(client->socket_fd, request_buffer, total_received, client_ip) != 0)
+            if (handle_file_upload_request(client->socket_fd, request_buffer, total_received, client_ip) == 0)
+            {
+                // Respuesta JSON indicando éxito
+                const char *resp = "{\"status\":\"success\",\"message\":\"Archivo procesado correctamente\"}";
+                send_http_response(client->socket_fd, 200, "application/json", resp, strlen(resp));
+                log_client_activity(client_ip, path, "POST", "success");
+            }
+            else
             {
                 LOG_ERROR("Error procesando POST de %s", client_ip);
+                send_error_response(client->socket_fd, 500, "Internal Server Error");
             }
         }
         else
