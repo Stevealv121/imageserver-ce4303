@@ -63,6 +63,8 @@ void *file_processor_thread(void *arg);
 int start_file_processor(void);
 void stop_file_processor(void);
 
+void get_queue_statistics(int *total_files, int *total_bytes, int *avg_file_size);
+
 // Variables globales del procesador
 extern pthread_t processor_thread;
 extern int processor_running;

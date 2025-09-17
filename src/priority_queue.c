@@ -417,9 +417,33 @@ static int send_processing_success_response(int client_socket, const processed_i
                               response_json, strlen(response_json));
 }
 
+void get_queue_statistics(int *total_files, int *total_bytes, int *avg_file_size)
+{
+    if (!total_files || !total_bytes || !avg_file_size)
+    {
+        return;
+    }
+
+    pthread_mutex_lock(&processing_queue.queue_mutex);
+
+    *total_files = processing_queue.size;
+    *total_bytes = 0;
+
+    for (int i = 0; i < processing_queue.size; i++)
+    {
+        *total_bytes += (int)processing_queue.items[i].file_size;
+    }
+
+    *avg_file_size = (*total_files > 0) ? (*total_bytes / *total_files) : 0;
+
+    pthread_mutex_unlock(&processing_queue.queue_mutex);
+}
+
 // Hilo procesador de archivos
 void *file_processor_thread(void *arg)
 {
+
+    (void)arg; // Suprimir warning
     LOG_INFO("Hilo procesador de archivos iniciado");
 
     while (processor_running)

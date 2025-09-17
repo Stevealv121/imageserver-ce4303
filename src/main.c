@@ -536,6 +536,9 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // Inicializar stats
+    init_file_stats();
+
     printf("Sistema inicializado correctamente\n\n");
 
     if (daemon_mode)

@@ -152,4 +152,6 @@ static inline int send_error_response(int socket, int status_code, const char *m
     return send_http_response(socket, status_code, "application/json", error_json, strlen(error_json));
 }
 
+void update_file_stats(int success, size_t bytes_processed, const char *filename);
+
 #endif // SERVER_H

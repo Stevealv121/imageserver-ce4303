@@ -830,3 +830,97 @@ void cleanup_server(void)
     main_server.status = SERVER_STOPPED;
     LOG_INFO("Limpieza del servidor completada");
 }
+
+/* Variable global para estadísticas */
+static file_stats_t global_file_stats = {0, 0, 0, 0};
+static pthread_mutex_t stats_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Implementación de funciones de estadísticas */
+file_stats_t *get_file_stats(void)
+{
+    return &global_file_stats;
+}
+
+void init_file_stats(void)
+{
+    pthread_mutex_lock(&stats_mutex);
+    global_file_stats.total_uploads = 0;
+    global_file_stats.successful_uploads = 0;
+    global_file_stats.failed_uploads = 0;
+    global_file_stats.total_bytes_processed = 0;
+    pthread_mutex_unlock(&stats_mutex);
+
+    LOG_INFO("Estadísticas de archivos inicializadas");
+}
+
+void update_file_stats(int success, size_t bytes_processed, const char *filename)
+{
+    if (!filename)
+        return;
+
+    pthread_mutex_lock(&stats_mutex);
+
+    global_file_stats.total_uploads++;
+    global_file_stats.total_bytes_processed += bytes_processed;
+
+    if (success)
+    {
+        global_file_stats.successful_uploads++;
+    }
+    else
+    {
+        global_file_stats.failed_uploads++;
+    }
+
+    pthread_mutex_unlock(&stats_mutex);
+
+    LOG_DEBUG("Estadísticas actualizadas: %s (%zu bytes) - %s",
+              filename, bytes_processed, success ? "éxito" : "error");
+}
+
+void log_file_stats(void)
+{
+    pthread_mutex_lock(&stats_mutex);
+
+    LOG_INFO("=== ESTADÍSTICAS DE ARCHIVOS ===");
+    LOG_INFO("Total uploads: %d", global_file_stats.total_uploads);
+    LOG_INFO("Uploads exitosos: %d", global_file_stats.successful_uploads);
+    LOG_INFO("Uploads fallidos: %d", global_file_stats.failed_uploads);
+    LOG_INFO("Total bytes procesados: %zu", global_file_stats.total_bytes_processed);
+
+    if (global_file_stats.total_uploads > 0)
+    {
+        double success_rate = (double)global_file_stats.successful_uploads /
+                              global_file_stats.total_uploads * 100.0;
+        double avg_file_size = (double)global_file_stats.total_bytes_processed /
+                               global_file_stats.total_uploads;
+
+        LOG_INFO("Tasa de éxito: %.1f%%", success_rate);
+        LOG_INFO("Tamaño promedio de archivo: %.1f bytes", avg_file_size);
+    }
+
+    LOG_INFO("===============================");
+
+    pthread_mutex_unlock(&stats_mutex);
+}
+
+void show_detailed_server_stats(void)
+{
+    LOG_INFO("=== ESTADÍSTICAS DETALLADAS DEL SERVIDOR ===");
+    LOG_INFO("Estado del servidor: %s", is_server_running() ? "EJECUTÁNDOSE" : "DETENIDO");
+    LOG_INFO("Clientes activos: %d", get_active_clients());
+    LOG_INFO("Puerto: %d", server_config.port);
+    LOG_INFO("Conexiones máximas: %d", server_config.max_connections);
+
+    /* Estadísticas de la cola de procesamiento */
+    int total_files, total_bytes, avg_file_size;
+    get_queue_statistics(&total_files, &total_bytes, &avg_file_size);
+
+    LOG_INFO("Cola de procesamiento:");
+    LOG_INFO("  - Archivos en cola: %d", total_files);
+    LOG_INFO("  - Bytes en cola: %d", total_bytes);
+    LOG_INFO("  - Tamaño promedio en cola: %d bytes", avg_file_size);
+
+    /* Estadísticas de archivos */
+    log_file_stats();
+}
