@@ -41,15 +41,6 @@ file_stats_t *get_file_stats(void)
 {
     return &global_stats;
 }
-
-// Loggear estadísticas
-void log_file_stats(void)
-{
-    LOG_INFO("Estadísticas - Uploads: %d (éxitos: %d, fallos: %d), Bytes: %zu",
-             global_stats.total_uploads, global_stats.successful_uploads,
-             global_stats.failed_uploads, global_stats.total_bytes_processed);
-}
-
 // Inicializar el servidor
 int init_server(void)
 {
@@ -834,24 +825,6 @@ void cleanup_server(void)
 /* Variable global para estadísticas */
 static file_stats_t global_file_stats = {0, 0, 0, 0};
 static pthread_mutex_t stats_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-/* Implementación de funciones de estadísticas */
-file_stats_t *get_file_stats(void)
-{
-    return &global_file_stats;
-}
-
-void init_file_stats(void)
-{
-    pthread_mutex_lock(&stats_mutex);
-    global_file_stats.total_uploads = 0;
-    global_file_stats.successful_uploads = 0;
-    global_file_stats.failed_uploads = 0;
-    global_file_stats.total_bytes_processed = 0;
-    pthread_mutex_unlock(&stats_mutex);
-
-    LOG_INFO("Estadísticas de archivos inicializadas");
-}
 
 void update_file_stats(int success, size_t bytes_processed, const char *filename)
 {
