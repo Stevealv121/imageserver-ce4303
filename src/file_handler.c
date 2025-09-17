@@ -392,6 +392,11 @@ int handle_file_upload_request(int client_socket, const char *request_data, size
 
     LOG_DEBUG("Content-Type: %s", content_type);
 
+    // Mover puntero al valor después de "Content-Type:"
+    const char *value_start = content_type + strlen("Content-Type:");
+    while (*value_start == ' ')
+        value_start++;
+
     // Verificar que es multipart/form-data
     if (!strstr(content_type, "multipart/form-data"))
     {
